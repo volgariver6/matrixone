@@ -417,7 +417,7 @@ func (c *Compile) compileAttachedScope(ctx context.Context, attachedPlan *plan.P
 
 func (c *Compile) compileQuery(ctx context.Context, qry *plan.Query) ([]*Scope, error) {
 	var err error
-	c.cnList, err = c.e.Nodes(c.isInternal, c.tenant, c.cnLabel)
+	c.cnList, err = c.e.Nodes(c.isInternal, c.tenant, c.uid, c.cnLabel)
 	if err != nil {
 		return nil, err
 	}

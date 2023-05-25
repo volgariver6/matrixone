@@ -190,7 +190,7 @@ type Compile struct {
 	stepRegs map[int32][]*process.WaitRegister
 
 	isInternal bool
-	// cnLabel is the CN labels which is parsed from session variable "cn_label".
+	// cnLabel is the CN labels which is received from proxy when build connection.
 	cnLabel map[string]string
 }
 

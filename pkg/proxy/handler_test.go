@@ -52,11 +52,12 @@ type testProxyHandler struct {
 }
 
 func newTestProxyHandler(t *testing.T) *testProxyHandler {
-	runtime.SetupProcessLevelRuntime(runtime.DefaultRuntime())
+	rt := runtime.DefaultRuntime()
+	runtime.SetupProcessLevelRuntime(rt)
 	ctx, cancel := context.WithCancel(context.TODO())
 	hc := &mockHAKeeperClient{}
 	mc := clusterservice.NewMOCluster(hc, 3*time.Second)
-	rt := runtime.DefaultRuntime()
+	rt.SetGlobalVariables(runtime.ClusterService, mc)
 	logger := rt.Logger()
 	st := stopper.NewStopper("test-proxy", stopper.WithLogger(rt.Logger().RawLogger()))
 	re := testRebalancer(t, st, logger, mc)
@@ -178,7 +179,8 @@ func TestHandler_Handle(t *testing.T) {
 	temp := os.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runtime.SetupProcessLevelRuntime(runtime.DefaultRuntime())
+	rt := runtime.DefaultRuntime()
+	runtime.SetupProcessLevelRuntime(rt)
 	listenAddr := fmt.Sprintf("%s/%d.sock", temp, time.Now().Nanosecond())
 	require.NoError(t, os.RemoveAll(listenAddr))
 	cfg := Config{
@@ -186,6 +188,9 @@ func TestHandler_Handle(t *testing.T) {
 		RebalanceDisabled: true,
 	}
 	hc := &mockHAKeeperClient{}
+	mc := clusterservice.NewMOCluster(hc, 3*time.Second)
+	defer mc.Close()
+	rt.SetGlobalVariables(runtime.ClusterService, mc)
 	addr := fmt.Sprintf("%s/%d.sock", temp, time.Now().Nanosecond())
 	require.NoError(t, os.RemoveAll(addr))
 	cn1 := testMakeCNServer("cn11", addr, 0, "", labelInfo{})
@@ -246,7 +251,8 @@ func TestHandler_HandleWithSSL(t *testing.T) {
 	temp := os.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runtime.SetupProcessLevelRuntime(runtime.DefaultRuntime())
+	rt := runtime.DefaultRuntime()
+	runtime.SetupProcessLevelRuntime(rt)
 	listenAddr := fmt.Sprintf("%s/%d.sock", temp, time.Now().Nanosecond())
 	require.NoError(t, os.RemoveAll(listenAddr))
 	cfg := Config{
@@ -254,6 +260,9 @@ func TestHandler_HandleWithSSL(t *testing.T) {
 		RebalanceDisabled: true,
 	}
 	hc := &mockHAKeeperClient{}
+	mc := clusterservice.NewMOCluster(hc, 3*time.Second)
+	defer mc.Close()
+	rt.SetGlobalVariables(runtime.ClusterService, mc)
 	addr := fmt.Sprintf("%s/%d.sock", temp, time.Now().Nanosecond())
 	require.NoError(t, os.RemoveAll(addr))
 	cn1 := testMakeCNServer("cn11", addr, 0, "", labelInfo{})
@@ -320,7 +329,8 @@ func testWithServer(t *testing.T, fn func(*testing.T, string, *Server)) {
 	temp := os.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	runtime.SetupProcessLevelRuntime(runtime.DefaultRuntime())
+	rt := runtime.DefaultRuntime()
+	runtime.SetupProcessLevelRuntime(rt)
 	listenAddr := fmt.Sprintf("%s/%d.sock", temp, time.Now().Nanosecond())
 	require.NoError(t, os.RemoveAll(listenAddr))
 	cfg := Config{
@@ -328,6 +338,9 @@ func testWithServer(t *testing.T, fn func(*testing.T, string, *Server)) {
 		RebalanceDisabled: true,
 	}
 	hc := &mockHAKeeperClient{}
+	mc := clusterservice.NewMOCluster(hc, 3*time.Second)
+	defer mc.Close()
+	rt.SetGlobalVariables(runtime.ClusterService, mc)
 	addr := fmt.Sprintf("%s/%d.sock", temp, time.Now().Nanosecond())
 	require.NoError(t, os.RemoveAll(addr))
 	cn1 := testMakeCNServer("cn11", addr, 0, "", labelInfo{})
