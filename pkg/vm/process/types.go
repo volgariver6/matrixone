@@ -193,7 +193,14 @@ type Process struct {
 	LockService lockservice.LockService
 	IncrService incrservice.AutoIncrementService
 
-	LoadTag bool
+	LoadTag  bool
+	LoadTag2 bool
+
+	Ti time.Time
+
+	SQL string
+
+	TotalCnt int
 
 	LastInsertID *uint64
 

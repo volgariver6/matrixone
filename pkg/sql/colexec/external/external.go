@@ -529,6 +529,8 @@ func getMOCSVReader(param *ExternalParam, proc *process.Process) (*ParseLineHand
 	return plh, nil
 }
 
+var TotalCnt int
+
 func scanCsvFile(ctx context.Context, param *ExternalParam, proc *process.Process) (*batch.Batch, error) {
 	var bat *batch.Batch
 	var err error
@@ -544,7 +546,38 @@ func scanCsvFile(ctx context.Context, param *ExternalParam, proc *process.Proces
 	}
 	plh := param.plh
 	finish := false
+	Ti := time.Now()
+	if param.bat == nil {
+		param.bat = makeBatch(param, plh.batchSize, proc)
+	} else {
+		bat := makeBatch(param, plh.batchSize, proc)
+		for i := 0; i < len(bat.Vecs); i++ {
+			tmp, _ := param.bat.Vecs[i].Dup(proc.GetMPool())
+			bat.Vecs[i] = tmp
+		}
+		/*
+			bat.Zs = make([]int64, param.bat.Vecs[0].Length())
+			for k := 0; k < bat.Vecs[0].Length(); k++ {
+				bat.Zs[k] = 1
+			}
+		*/
+		bat.SetRowCount(bat.Vecs[0].Length())
+		proc.TotalCnt += 8192
+		TotalCnt += 8192
+		logutil.Infof("liubo: 888 ------------------ %d, %d, %s, %s", TotalCnt, proc.TotalCnt, proc.Ti, time.Since(Ti))
+		if TotalCnt > 3e6 { //(1e9 + 1e8) {
+			param.Fileparam.End = true
+			return nil, nil
+		}
+		return bat, nil
+	}
 	cnt, finish, err = readCountStringLimitSize(plh.csvReader, proc.Ctx, param.maxBatchSize, plh.moCsvLineArray)
+	proc.TotalCnt += cnt
+	TotalCnt += cnt
+	logutil.Infof("liubo: external: total cnt %d, %d, %v, %s", TotalCnt, proc.TotalCnt, proc.Ti, time.Since(Ti))
+	if finish || err != nil {
+		logutil.Infof("liubo: external: total cnt %d, %d, %v, %s, err: %v, finish: %v", TotalCnt, proc.TotalCnt, proc.Ti, time.Since(Ti), err, finish)
+	}
 	if err != nil {
 		logutil.Errorf("read external file meet error: %s", err.Error())
 		return nil, err
@@ -579,6 +612,12 @@ func scanCsvFile(ctx context.Context, param *ExternalParam, proc *process.Proces
 	if err != nil {
 		return nil, err
 	}
+	for i := 0; i < len(bat.Vecs); i++ {
+		tmp, _ := bat.Vecs[i].Dup(proc.GetMPool())
+		param.bat.Vecs[i] = tmp
+	}
+	bat.SetRowCount(bat.Vecs[0].Length())
+	logutil.Infof("liubo: ------------------ 111 %+v", plh.batchSize)
 	return bat, nil
 }
 
