@@ -17,6 +17,7 @@ package lockservice
 import (
 	"bytes"
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"sync"
 	"time"
 
@@ -400,6 +401,7 @@ func (h *mapBasedTxnHolder) getActiveTxn(
 
 	if remoteService != "" {
 		if _, ok := h.mu.remoteServices[remoteService]; !ok {
+			logutil.Infof("liubo: get remote service %s", remoteService)
 			h.mu.remoteServices[remoteService] = h.mu.dequeue.PushBack(remote{
 				id:   remoteService,
 				time: time.Now(),
@@ -429,6 +431,7 @@ func (h *mapBasedTxnHolder) keepRemoteActiveTxn(remoteService string) {
 	if e, ok := h.mu.remoteServices[remoteService]; ok {
 		e.Value.time = time.Now()
 		h.mu.dequeue.MoveToBack(e)
+		logutil.Infof("liubo: keep remote service %s", remoteService)
 	}
 }
 
@@ -459,6 +462,7 @@ func (h *mapBasedTxnHolder) getTimeoutRemoveTxn(
 	if removed := h.mu.dequeue.Drain(0, idx); removed != nil {
 		removed.Iter(0, func(r remote) bool {
 			timeoutServices[r.id] = struct{}{}
+			logutil.Infof("liubo: remote service timeout ID is %s", r.id)
 			return true
 		})
 

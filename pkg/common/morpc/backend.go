@@ -512,6 +512,9 @@ func (rb *remoteBackend) readLoop(ctx context.Context) {
 		default:
 			msg, err := rb.conn.Read(goetty.ReadOptions{})
 			if err != nil {
+				logutil.Infof("liubo: read from backend failed %v, rb %p, remote addr %s",
+					err, rb, rb.remote)
+
 				rb.logger.Error("read from backend failed", zap.Error(err))
 				rb.inactiveReadLoop()
 				rb.cancelActiveStreams()
@@ -555,6 +558,7 @@ func (rb *remoteBackend) fetch(messages []*Future, maxFetchCount int) ([]*Future
 	case <-rb.resetConnC:
 		// If the connect needs to be reset, then all futures in the waiting response state will never
 		// get the response and need to be notified of an error immediately.
+		logutil.Infof("liubo: failed to fetch makeAllWaitingFutureFailed(), rb %p", rb)
 		rb.makeAllWaitingFutureFailed()
 		rb.handleResetConn()
 	case <-rb.stopWriteC:
@@ -585,14 +589,22 @@ func (rb *remoteBackend) makeAllWaitingFutureFailed() {
 	var ids []uint64
 	var waitings []*Future
 	func() {
+		logutil.Infof("liubo: before make future fail %p", rb)
 		rb.mu.Lock()
-		defer rb.mu.Unlock()
+		defer func() {
+			logutil.Infof("liubo: after make future fail %p", rb)
+			rb.mu.Unlock()
+		}()
 		ids = make([]uint64, 0, len(rb.mu.futures))
 		waitings = make([]*Future, 0, len(rb.mu.futures))
 		for id, f := range rb.mu.futures {
+			logutil.Infof("liubo: iter future, id %d, addr %p, rb %p", f.id, f, rb)
 			if f.waiting.Load() {
+				logutil.Infof("liubo: add waiting, f id %d, f a %p, rb %p", f.id, f, rb)
 				waitings = append(waitings, f)
 				ids = append(ids, id)
+			} else {
+				logutil.Infof("liubo: f not waiting, id %d, addr %p, rb %p", f.id, f, rb)
 			}
 		}
 	}()
@@ -676,6 +688,12 @@ func (rb *remoteBackend) requestDone(ctx context.Context, id uint64, msg RPCMess
 	rb.mu.Lock()
 	if f, ok := rb.mu.futures[id]; ok {
 		delete(rb.mu.futures, id)
+		func() {
+			f.smu.Lock()
+			defer f.smu.Unlock()
+			f.smu.deleted = fmt.Sprintf("liubo: done f id %d, addr %p", f.id, f)
+		}()
+
 		rb.mu.Unlock()
 		if err == nil {
 			f.done(response, cb)
@@ -710,6 +728,11 @@ func (rb *remoteBackend) releaseFuture(f *Future) {
 	defer rb.mu.Unlock()
 
 	delete(rb.mu.futures, f.getSendMessageID())
+	func() {
+		f.smu.Lock()
+		defer f.smu.Unlock()
+		f.smu.deleted = fmt.Sprintf("liubo: release f id %d, addr %p", f.id, f)
+	}()
 	f.reset()
 	rb.pool.futures.Put(f)
 }

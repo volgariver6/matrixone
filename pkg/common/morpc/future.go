@@ -15,9 +15,11 @@
 package morpc
 
 import (
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 func newFuture(releaseFunc func(f *Future)) *Future {
@@ -41,11 +43,16 @@ type Future struct {
 	writtenC    chan error
 	waiting     atomic.Bool
 	releaseFunc func(*Future)
-	mu          struct {
+	smu         struct {
 		sync.Mutex
-		closed bool
-		ref    int
-		cb     func()
+		deleted string
+	}
+	mu struct {
+		sync.Mutex
+		notified bool
+		closed   bool
+		ref      int
+		cb       func()
 	}
 }
 
@@ -58,7 +65,11 @@ func (f *Future) init(send RPCMessage) {
 	f.id = send.Message.GetID()
 	f.mu.Lock()
 	f.mu.closed = false
+	f.mu.notified = false
 	f.mu.Unlock()
+	f.smu.Lock()
+	f.smu.deleted = ""
+	f.smu.Unlock()
 }
 
 // Get get the response data synchronously, blocking until `context.Done` or the response is received.
@@ -78,6 +89,9 @@ func (f *Future) Get() (Message, error) {
 		return resp, nil
 	case err := <-f.errC:
 		return nil, err
+	case <-time.After(time.Minute * 3):
+		logutil.Fatalf("liubo: f timeout, id %d, addr %p, deleted %s", f.id, f, f.smu.deleted)
+		return nil, nil
 	}
 }
 
@@ -133,6 +147,9 @@ func (f *Future) error(id uint64, err error, cb func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	if f.mu.notified {
+		return
+	}
 	if !f.mu.closed && !f.timeout() {
 		if id != f.getSendMessageID() {
 			return
@@ -142,6 +159,7 @@ func (f *Future) error(id uint64, err error, cb func()) {
 	} else if cb != nil {
 		cb()
 	}
+	f.mu.notified = true
 }
 
 func (f *Future) ref() {
