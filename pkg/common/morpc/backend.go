@@ -1170,6 +1170,7 @@ func (s *stream) done(
 	}
 	if response != nil &&
 		message.streamSequence != s.lastReceivedSequence+1 {
+		logutil.Errorf("liubo: stream back, %d, %d", message.streamSequence, s.lastReceivedSequence+1)
 		response = nil
 	}
 

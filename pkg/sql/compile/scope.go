@@ -907,8 +907,15 @@ func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, f
 			logutil.Warnf("proc ctx done during forward")
 			return nil
 		case val, ok = <-receiveCh:
-			if val == nil || !ok {
-				return moerr.NewStreamClosedNoCtx()
+			if val == nil {
+				e1 := moerr.NewStreamClosedNoCtx()
+				logutil.Errorf("liubo: val is nil")
+				return e1
+			}
+			if !ok {
+				e2 := moerr.NewStreamClosedNoCtx()
+				logutil.Errorf("liubo: chan is closed")
+				return e2
 			}
 		}
 

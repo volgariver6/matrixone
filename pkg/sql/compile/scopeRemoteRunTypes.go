@@ -153,8 +153,13 @@ func (sender *messageSenderOnClient) receiveMessage() (morpc.Message, error) {
 		return nil, nil
 
 	case val, ok := <-sender.receiveCh:
-		if !ok || val == nil {
+		if !ok {
 			// ch close
+			logutil.Errorf("liubo: sender, chan is closed")
+			return nil, moerr.NewStreamClosed(sender.ctx)
+		}
+		if val == nil {
+			logutil.Errorf("liubo: sender, val is nil")
 			return nil, moerr.NewStreamClosed(sender.ctx)
 		}
 		return val, nil
