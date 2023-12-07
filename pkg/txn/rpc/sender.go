@@ -16,6 +16,7 @@ package rpc
 
 import (
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"runtime"
 	"sync"
 	"time"
@@ -313,6 +314,9 @@ func (ls *localStream) start() {
 			err := v.handleFunc(v.ctx, v.request.(*txn.TxnRequest), response)
 			if err != nil {
 				response.TxnError = txn.WrapError(moerr.NewRpcErrorNoCtx(err.Error()), 0)
+			}
+			if response == nil {
+				logutil.Errorf("liubo: in start resp is nil")
 			}
 			out <- response
 		}

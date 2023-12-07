@@ -1165,6 +1165,9 @@ func (s *stream) done(
 	if message.Cancel != nil {
 		defer message.Cancel()
 	}
+	if response == nil {
+		logutil.Errorf("liubo: stream back 00")
+	}
 	if response != nil && !message.stream {
 		panic("BUG")
 	}
