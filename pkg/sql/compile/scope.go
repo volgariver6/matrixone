@@ -909,7 +909,7 @@ func receiveMsgAndForward(proc *process.Process, receiveCh chan morpc.Message, f
 		case val, ok = <-receiveCh:
 			if val == nil {
 				e1 := moerr.NewStreamClosedNoCtx()
-				logutil.Errorf("liubo: val is nil")
+				logutil.Errorf("liubo: val is nil, chan is %p", receiveCh)
 				return e1
 			}
 			if !ok {

@@ -21,6 +21,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1166,14 +1167,16 @@ func (s *stream) done(
 		defer message.Cancel()
 	}
 	if response == nil {
-		logutil.Errorf("liubo: stream back 00")
+		s.rb.logger.Error(fmt.Sprintf("liubo: done resp is nil, chan is %p, stack is %s", s.c, debug.Stack()))
 	}
 	if response != nil && !message.stream {
 		panic("BUG")
 	}
 	if response != nil &&
 		message.streamSequence != s.lastReceivedSequence+1 {
-		logutil.Errorf("liubo: stream back, %d, %d", message.streamSequence, s.lastReceivedSequence+1)
+		s.rb.logger.Error("liubo: done seq wrong",
+			zap.Uint32("a", message.streamSequence),
+			zap.Uint32("b", s.lastReceivedSequence+1))
 		response = nil
 	}
 

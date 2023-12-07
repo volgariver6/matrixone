@@ -159,7 +159,7 @@ func (sender *messageSenderOnClient) receiveMessage() (morpc.Message, error) {
 			return nil, moerr.NewStreamClosed(sender.ctx)
 		}
 		if val == nil {
-			logutil.Errorf("liubo: sender, val is nil")
+			logutil.Errorf("liubo: sender, val is nil, chan is %p", sender.receiveCh)
 			return nil, moerr.NewStreamClosed(sender.ctx)
 		}
 		return val, nil
