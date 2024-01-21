@@ -15,7 +15,6 @@
 package plan
 
 import (
-	"github.com/matrixorigin/matrixone/pkg/sql/util"
 	"math/bits"
 	"unsafe"
 
@@ -23,6 +22,8 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
 	"github.com/matrixorigin/matrixone/pkg/pb/plan"
+	pb "github.com/matrixorigin/matrixone/pkg/pb/statsinfo"
+	"github.com/matrixorigin/matrixone/pkg/sql/util"
 )
 
 const (
@@ -271,7 +272,7 @@ func determinShuffleType(col *plan.ColRef, n *plan.Node, builder *QueryBuilder) 
 		}
 	}
 
-	s := getStatsInfoByTableID(tableDef.TblId, builder)
+	s := builder.getStatsInfoByTableID(tableDef.TblId)
 	if s == nil {
 		return
 	}
@@ -279,7 +280,7 @@ func determinShuffleType(col *plan.ColRef, n *plan.Node, builder *QueryBuilder) 
 	n.Stats.HashmapStats.ShuffleColMin = int64(s.MinValMap[colName])
 	n.Stats.HashmapStats.ShuffleColMax = int64(s.MaxValMap[colName])
 	n.Stats.HashmapStats.Ranges = shouldUseShuffleRange(s.ShuffleRangeMap[colName])
-	n.Stats.HashmapStats.Nullcnt = s.NullCntMap[colName]
+	n.Stats.HashmapStats.Nullcnt = int64(s.NullCntMap[colName])
 }
 
 // to determine if join need to go shuffle
@@ -443,7 +444,7 @@ func GetShuffleDop() (dop int) {
 func determinShuffleForScan(n *plan.Node, builder *QueryBuilder) {
 	n.Stats.HashmapStats.Shuffle = true
 	n.Stats.HashmapStats.ShuffleType = plan.ShuffleType_Hash
-	s := getStatsInfoByTableID(n.TableDef.TblId, builder)
+	s := builder.getStatsInfoByTableID(n.TableDef.TblId)
 	if s == nil {
 		return
 	}
@@ -471,7 +472,7 @@ func determinShuffleForScan(n *plan.Node, builder *QueryBuilder) {
 		n.Stats.HashmapStats.ShuffleColMin = int64(s.MinValMap[firstSortColName])
 		n.Stats.HashmapStats.ShuffleColMax = int64(s.MaxValMap[firstSortColName])
 		n.Stats.HashmapStats.Ranges = shouldUseShuffleRange(s.ShuffleRangeMap[firstSortColName])
-		n.Stats.HashmapStats.Nullcnt = s.NullCntMap[firstSortColName]
+		n.Stats.HashmapStats.Nullcnt = int64(s.NullCntMap[firstSortColName])
 	}
 }
 
@@ -519,7 +520,7 @@ func determineShuffleMethod2(nodeID, parentID int32, builder *QueryBuilder) {
 	}
 }
 
-func shouldUseShuffleRange(s *ShuffleRange) []float64 {
+func shouldUseShuffleRange(s *pb.ShuffleRange) []float64 {
 	if s == nil {
 		return nil
 	}

@@ -16,20 +16,335 @@ package disttae
 
 import (
 	"context"
-	"time"
-
-	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
-	"github.com/matrixorigin/matrixone/pkg/vm/engine/disttae/logtailreplay"
-
 	"math"
+	"sync"
+	"time"
 
 	"github.com/matrixorigin/matrixone/pkg/container/types"
 	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/fileservice"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/objectio"
+	"github.com/matrixorigin/matrixone/pkg/pb/gossip"
+	"github.com/matrixorigin/matrixone/pkg/pb/logtail"
+	"github.com/matrixorigin/matrixone/pkg/pb/query"
+	pb "github.com/matrixorigin/matrixone/pkg/pb/statsinfo"
+	"github.com/matrixorigin/matrixone/pkg/pb/timestamp"
+	"github.com/matrixorigin/matrixone/pkg/queryservice/client"
 	plan2 "github.com/matrixorigin/matrixone/pkg/sql/plan"
+	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
+	"github.com/matrixorigin/matrixone/pkg/vm/engine/disttae/logtailreplay"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/tae/index"
 )
+
+const (
+	// LogtailUpdateThreshold is the threshold of receiving logtail entries
+	// to trigger to update stats info .
+	LogtailUpdateThreshold = 1000
+
+	// MinUpdateInterval is the minimal interval to update stats info as it
+	// is necessary to update stats every time.
+	MinUpdateInterval = time.Second * 30
+)
+
+type updateStatsRequest struct {
+	// statsInfo is the field which is to update.
+	statsInfo *pb.StatsInfo
+
+	// The following fields are needed to update the stats.
+
+	// tableDef is the main table definition.
+	tableDef *plan2.TableDef
+	// partitionsTableDef is the partitions table definition.
+	partitionsTableDef []*plan2.TableDef
+
+	partitionState  *logtailreplay.PartitionState
+	fs              fileservice.FileService
+	ts              types.TS
+	approxObjectNum int32
+}
+
+func newUpdateStatsRequest(
+	tableDef *plan2.TableDef,
+	partitionsTableDef []*plan2.TableDef,
+	partitionState *logtailreplay.PartitionState,
+	fs fileservice.FileService,
+	ts types.TS,
+	approxObjectNum int32,
+	stats *pb.StatsInfo,
+) *updateStatsRequest {
+	return &updateStatsRequest{
+		statsInfo:          stats,
+		tableDef:           tableDef,
+		partitionsTableDef: partitionsTableDef,
+		partitionState:     partitionState,
+		fs:                 fs,
+		ts:                 ts,
+		approxObjectNum:    approxObjectNum,
+	}
+}
+
+type GlobalStats struct {
+	ctx context.Context
+
+	// engine is the global Engine instance.
+	engine *Engine
+
+	// tailC is the chan to receive entries from logtail
+	// and then update the stats info map.
+	// TODO(volgariver6): add metrics of the chan length.
+	tailC chan *logtail.TableLogtail
+
+	updateC chan pb.StatsInfoKey
+
+	// updated is used to control the frequency of updating stats info.
+	// It is not necessary to update stats info too frequently.
+	// It records the update time of the stats info key.
+	updated map[pb.StatsInfoKey]time.Time
+
+	// tableLogtailCounter is the counter of the logtail entry of stats info key.
+	tableLogtailCounter map[pb.StatsInfoKey]int
+
+	// statsInfoMap is the global stats info in engine which
+	// contains all subscribed tables stats info.
+	mu struct {
+		sync.Mutex
+
+		// cond is used to wait for stats updated for the first time.
+		// If sync parameter is false, it is unuseful.
+		cond *sync.Cond
+
+		// statsInfoMap is the real stats info data.
+		statsInfoMap map[pb.StatsInfoKey]*pb.StatsInfo
+	}
+
+	// KeyRouter is the router to decides which node should send to.
+	KeyRouter client.KeyRouter[pb.StatsInfoKey]
+}
+
+func NewGlobalStats(
+	ctx context.Context, e *Engine, keyRouter client.KeyRouter[pb.StatsInfoKey],
+) *GlobalStats {
+	s := &GlobalStats{
+		ctx:                 ctx,
+		engine:              e,
+		tailC:               make(chan *logtail.TableLogtail, 10000),
+		updateC:             make(chan pb.StatsInfoKey, 1000),
+		updated:             make(map[pb.StatsInfoKey]time.Time),
+		tableLogtailCounter: make(map[pb.StatsInfoKey]int),
+		KeyRouter:           keyRouter,
+	}
+	s.mu.statsInfoMap = make(map[pb.StatsInfoKey]*pb.StatsInfo)
+	s.mu.cond = sync.NewCond(&s.mu)
+	go s.consumeWorker(ctx)
+	go s.updateWorker(ctx)
+	return s
+}
+
+func (gs *GlobalStats) Get(ctx context.Context, key pb.StatsInfoKey, sync bool) *pb.StatsInfo {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	info, ok := gs.mu.statsInfoMap[key]
+	if ok && info != nil {
+		return info
+	}
+
+	// Get stats info from remote node.
+	if gs.KeyRouter != nil {
+		client := gs.engine.qc
+		target := gs.KeyRouter.Target(key)
+		if len(target) != 0 && client != nil {
+			resp, err := client.SendMessage(ctx, target, client.NewRequest(query.CmdMethod_GetStatsInfo))
+			if err != nil || resp == nil {
+				logutil.Errorf("failed to send request to %s, err: %v, resp: %v", "", err, resp)
+			} else if resp.GetStatsInfoResponse != nil {
+				defer client.Release(resp)
+
+				info := resp.GetStatsInfoResponse.StatsInfo
+				// If we get stats info from remote node, update local stats info.
+				gs.mu.statsInfoMap[key] = info
+				return info
+			}
+		}
+	}
+
+	ok = false
+	if sync {
+		for !ok {
+			if ctx.Err() != nil {
+				return nil
+			}
+
+			// If the trigger condition is not satisfied, the stats will not be updated
+			// for long time. So we trigger the update here to get the stats info as soon
+			// as possible.
+			gs.triggerUpdate(key)
+
+			// Wait until stats info of the key is updated.
+			gs.mu.cond.Wait()
+
+			info, ok = gs.mu.statsInfoMap[key]
+		}
+	}
+	return info
+}
+
+func (gs *GlobalStats) enqueue(tail *logtail.TableLogtail) {
+	select {
+	case gs.tailC <- tail:
+	default:
+		logutil.Errorf("the channel of logtails is full")
+	}
+}
+
+func (gs *GlobalStats) consumeWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case tail := <-gs.tailC:
+			gs.consumeLogtail(tail)
+		}
+	}
+}
+
+func (gs *GlobalStats) updateWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case key := <-gs.updateC:
+			gs.updateTableStats(key)
+		}
+	}
+}
+
+func (gs *GlobalStats) triggerUpdate(key pb.StatsInfoKey) {
+	select {
+	case gs.updateC <- key:
+	default:
+		logutil.Errorf("the channel of update table is full")
+	}
+}
+
+func (gs *GlobalStats) consumeLogtail(tail *logtail.TableLogtail) {
+	key := pb.StatsInfoKey{
+		DatabaseID: tail.Table.DbId,
+		TableID:    tail.Table.TbId,
+	}
+	if len(tail.CkpLocation) > 0 {
+		gs.triggerUpdate(key)
+	} else if tail.Table != nil {
+		var triggered bool
+		for _, cmd := range tail.Commands {
+			if logtailreplay.IsBlkTable(cmd.TableName) ||
+				logtailreplay.IsObjTable(cmd.TableName) ||
+				logtailreplay.IsMetaTable(cmd.TableName) {
+				triggered = true
+				gs.triggerUpdate(key)
+				break
+			}
+		}
+		if _, ok := gs.tableLogtailCounter[key]; !ok {
+			gs.tableLogtailCounter[key] = 1
+		} else {
+			gs.tableLogtailCounter[key]++
+		}
+		if !triggered && gs.tableLogtailCounter[key] > LogtailUpdateThreshold {
+			gs.tableLogtailCounter[key] = 0
+			gs.triggerUpdate(key)
+		}
+	}
+}
+
+func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
+	ts, ok := gs.updated[key]
+	if ok && time.Since(ts) < MinUpdateInterval {
+		return
+	}
+
+	// updated is used to mark that the stats info is updated.
+	var updated bool
+
+	stats := plan2.NewStatsInfo()
+	defer func() {
+		gs.mu.Lock()
+		defer gs.mu.Unlock()
+		gs.mu.statsInfoMap[key] = stats
+
+		// If it is the first time that the stats info is updated,
+		// send it to key router.
+		if _, ok := gs.updated[key]; !ok && gs.KeyRouter != nil && updated {
+			gs.KeyRouter.AddItem(gossip.CommonItem{
+				Operation: gossip.Operation_Set,
+				Key: &gossip.CommonItem_StatsInfoKey{
+					StatsInfoKey: &pb.StatsInfoKey{
+						DatabaseID: key.DatabaseID,
+						TableID:    key.TableID,
+					},
+				},
+			})
+		}
+
+		// update the time to current time only if the stats is not nil.
+		if stats.ApproxObjectNumber > 0 {
+			gs.updated[key] = time.Now()
+		}
+
+		// Notify all the waiters to read the new stats info.
+		gs.mu.cond.Broadcast()
+	}()
+
+	table := gs.engine.catalog.GetTableById(key.DatabaseID, key.TableID)
+	// table or its definition is nil, means that the table is created but not committed yet.
+	if table == nil || table.TableDef == nil {
+		logutil.Errorf("cannot get table by ID %v", key)
+		return
+	}
+
+	partitionState := gs.engine.getPartition(key.DatabaseID, key.TableID).Snapshot()
+	var partitionsTableDef []*plan2.TableDef
+	var approxObjectNum int32
+	if table.Partitioned > 0 {
+		partitionInfo := &plan2.PartitionByDef{}
+		if err := partitionInfo.UnMarshalPartitionInfo([]byte(table.Partition)); err != nil {
+			logutil.Errorf("failed to unmarshal partition table: %v", err)
+			return
+		}
+		for _, partitionTableName := range partitionInfo.PartitionTableNames {
+			partitionTable := gs.engine.catalog.GetTableByName(key.DatabaseID, partitionTableName)
+			partitionsTableDef = append(partitionsTableDef, partitionTable.TableDef)
+			ps := gs.engine.getPartition(key.DatabaseID, partitionTable.Id).Snapshot()
+			approxObjectNum += int32(ps.ApproxObjectsNum())
+		}
+	} else {
+		approxObjectNum = int32(partitionState.ApproxObjectsNum())
+	}
+
+	if approxObjectNum == 0 {
+		// There are no objects flushed yet.
+		return
+	}
+
+	// the time used to init stats info is not need to be too precise.
+	now := timestamp.Timestamp{PhysicalTime: time.Now().UnixNano()}
+	req := newUpdateStatsRequest(
+		table.TableDef,
+		partitionsTableDef,
+		partitionState,
+		gs.engine.fs,
+		types.TimestampToTS(now),
+		approxObjectNum,
+		stats,
+	)
+	if err := UpdateStats(gs.ctx, req); err != nil {
+		logutil.Errorf("failed to init stats info for table %v", key)
+		return
+	}
+	updated = true
+}
 
 func calcNdvUsingZonemap(zm objectio.ZoneMap, t *types.Type) float64 {
 	if !zm.IsInited() {
@@ -113,26 +428,20 @@ func getMinMaxValueByFloat64(typ types.Type, buf []byte) float64 {
 }
 
 // get ndv, minval , maxval, datatype from zonemap. Retrieve all columns except for rowid, return accurate number of objects
-func updateInfoFromZoneMap(info *plan2.InfoFromZoneMap, ctx context.Context, tbl *txnTable) error {
+func updateInfoFromZoneMap(ctx context.Context, req *updateStatsRequest, info *plan2.InfoFromZoneMap) error {
 	start := time.Now()
 	defer func() {
 		v2.TxnStatementUpdateInfoFromZonemapHistogram.Observe(time.Since(start).Seconds())
 	}()
-	lenCols := len(tbl.tableDef.Cols) - 1 /* row-id */
-	proc := tbl.db.txn.proc
-	tableDef := tbl.GetTableDef(ctx)
+	lenCols := len(req.tableDef.Cols) - 1 /* row-id */
 	var (
 		init    bool
 		err     error
-		part    *logtailreplay.PartitionState
 		meta    objectio.ObjectDataMeta
 		objMeta objectio.ObjectMeta
 	)
-	fs, err := fileservice.Get[fileservice.FileService](proc.FileService, defines.SharedFileServiceName)
+	fs, err := fileservice.Get[fileservice.FileService](req.fs, defines.SharedFileServiceName)
 	if err != nil {
-		return err
-	}
-	if part, err = tbl.getPartitionState(ctx); err != nil {
 		return err
 	}
 
@@ -143,16 +452,18 @@ func updateInfoFromZoneMap(info *plan2.InfoFromZoneMap, ctx context.Context, tbl
 		}
 		meta = objMeta.MustDataMeta()
 		info.AccurateObjectNumber++
-		info.BlockNumber += int(obj.BlkCnt())
+		info.BlockNumber += int32(obj.BlkCnt())
 		info.TableCnt += float64(meta.BlockHeader().Rows())
 		if !init {
 			init = true
-			for idx, col := range tableDef.Cols[:lenCols] {
+			for idx, col := range req.tableDef.Cols[:lenCols] {
 				objColMeta := meta.MustGetColumn(uint16(col.Seqnum))
 				info.NullCnts[idx] = int64(objColMeta.NullCnt())
 				info.ColumnZMs[idx] = objColMeta.ZoneMap().Clone()
 				info.DataTypes[idx] = types.T(col.Typ.Id).ToType()
 				info.ColumnNDVs[idx] = float64(objColMeta.Ndv())
+				info.ColumnSize[idx] = meta.BlockHeader().ZoneMapArea().Length() +
+					meta.BlockHeader().BFExtent().Length() + objColMeta.Location().Length()
 				if info.ColumnNDVs[idx] > 100 || info.ColumnNDVs[idx] > 0.1*float64(meta.BlockHeader().Rows()) {
 					switch info.DataTypes[idx].Oid {
 					case types.T_int64, types.T_int32, types.T_int16, types.T_uint64, types.T_uint32, types.T_uint16:
@@ -171,7 +482,7 @@ func updateInfoFromZoneMap(info *plan2.InfoFromZoneMap, ctx context.Context, tbl
 				}
 			}
 		} else {
-			for idx, col := range tableDef.Cols[:lenCols] {
+			for idx, col := range req.tableDef.Cols[:lenCols] {
 				objColMeta := meta.MustGetColumn(uint16(col.Seqnum))
 				info.NullCnts[idx] += int64(objColMeta.NullCnt())
 				zm := objColMeta.ZoneMap().Clone()
@@ -181,6 +492,7 @@ func updateInfoFromZoneMap(info *plan2.InfoFromZoneMap, ctx context.Context, tbl
 				index.UpdateZM(info.ColumnZMs[idx], zm.GetMaxBuf())
 				index.UpdateZM(info.ColumnZMs[idx], zm.GetMinBuf())
 				info.ColumnNDVs[idx] += float64(objColMeta.Ndv())
+				info.ColumnSize[idx] += objColMeta.Location().Length()
 				if info.ShuffleRanges[idx] != nil {
 					switch info.DataTypes[idx].Oid {
 					case types.T_int64, types.T_int32, types.T_int16, types.T_uint64, types.T_uint32, types.T_uint16:
@@ -195,16 +507,15 @@ func updateInfoFromZoneMap(info *plan2.InfoFromZoneMap, ctx context.Context, tbl
 		}
 		return nil
 	}
-	if err = tbl.ForeachVisibleDataObject(part, onObjFn); err != nil {
+	if err = ForeachVisibleDataObject(req.partitionState, req.ts, onObjFn); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func adjustNDV(info *plan2.InfoFromZoneMap, tbl *txnTable) {
-	tableDef := tbl.GetTableDef(context.TODO())
-	lenCols := len(tbl.tableDef.Cols) - 1 /* row-id */
+func adjustNDV(info *plan2.InfoFromZoneMap, tableDef *plan2.TableDef) {
+	lenCols := len(tableDef.Cols) - 1 /* row-id */
 
 	if info.AccurateObjectNumber > 1 {
 		for idx := range tableDef.Cols[:lenCols] {
@@ -227,43 +538,31 @@ func adjustNDV(info *plan2.InfoFromZoneMap, tbl *txnTable) {
 	}
 }
 
-// calculate and update the stats for scan node.
-func UpdateStats(ctx context.Context, tbl *txnTable, s *plan2.StatsInfoMap, approxNumObjects int) bool {
+// UpdateStats is the main function to calculate and update the stats for scan node.
+func UpdateStats(ctx context.Context, req *updateStatsRequest) error {
 	start := time.Now()
 	defer func() {
 		v2.TxnStatementUpdateStatsDurationHistogram.Observe(time.Since(start).Seconds())
 	}()
-	lenCols := len(tbl.tableDef.Cols) - 1 /* row-id */
+	lenCols := len(req.tableDef.Cols) - 1 /* row-id */
 	info := plan2.NewInfoFromZoneMap(lenCols)
-	info.ApproxObjectNumber = approxNumObjects
-	err := updateInfoFromZoneMap(info, ctx, tbl)
-	if err != nil || info.ApproxObjectNumber == 0 {
-		return false
+	if req.approxObjectNum == 0 {
+		return nil
 	}
-	adjustNDV(info, tbl)
-	plan2.UpdateStatsInfoMap(info, tbl.GetTableDef(ctx), s)
-	return true
-}
 
-// calculate and update the stats for scan node.
-func UpdateStatsForPartitionTable(ctx context.Context, baseTable *txnTable, partitionTables []any, s *plan2.StatsInfoMap, approxNumObjects int) bool {
-	if len(partitionTables) == 0 {
-		return false
-	}
-	lenCols := len(baseTable.tableDef.Cols) - 1 /* row-id */
-	info := plan2.NewInfoFromZoneMap(lenCols)
-	info.ApproxObjectNumber = approxNumObjects
-	for _, partitionTable := range partitionTables {
-		ptable := partitionTable.(*txnTable)
-		err := updateInfoFromZoneMap(info, ctx, ptable)
-		if err != nil {
-			return false
+	info.ApproxObjectNumber = req.approxObjectNum
+	baseTableDef := req.tableDef
+	if len(req.partitionsTableDef) > 0 {
+		for _, def := range req.partitionsTableDef {
+			req.tableDef = def
+			if err := updateInfoFromZoneMap(ctx, req, info); err != nil {
+				return err
+			}
 		}
+	} else if err := updateInfoFromZoneMap(ctx, req, info); err != nil {
+		return err
 	}
-	if info.ApproxObjectNumber == 0 {
-		return false
-	}
-	adjustNDV(info, baseTable)
-	plan2.UpdateStatsInfoMap(info, baseTable.GetTableDef(ctx), s)
-	return true
+	adjustNDV(info, baseTableDef)
+	plan2.UpdateStatsInfo(info, baseTableDef, req.statsInfo)
+	return nil
 }

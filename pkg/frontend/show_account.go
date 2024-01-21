@@ -161,7 +161,7 @@ func requestStorageUsage(ses *Session, accIds [][]int32) (resp any, err error) {
 	proc := process.New(ctx, ses.proc.GetMPool(),
 		ses.proc.TxnClient, txnOperator,
 		ses.proc.FileService, ses.proc.LockService,
-		ses.proc.QueryService, ses.proc.Hakeeper,
+		ses.proc.QueryClient, ses.proc.Hakeeper,
 		ses.proc.UdfService, ses.proc.Aicm,
 	)
 

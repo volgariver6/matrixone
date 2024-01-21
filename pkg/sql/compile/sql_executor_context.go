@@ -22,6 +22,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/catalog"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/defines"
+	pb "github.com/matrixorigin/matrixone/pkg/pb/statsinfo"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan/function"
 	"github.com/matrixorigin/matrixone/pkg/sql/util"
@@ -32,11 +33,10 @@ import (
 var _ plan.CompilerContext = new(compilerContext)
 
 type compilerContext struct {
-	ctx        context.Context
-	defaultDB  string
-	engine     engine.Engine
-	proc       *process.Process
-	statsCache *plan.StatsCache
+	ctx       context.Context
+	defaultDB string
+	engine    engine.Engine
+	proc      *process.Process
 
 	buildAlterView       bool
 	dbOfView, nameOfView string
@@ -80,23 +80,12 @@ func (c *compilerContext) ResolveAccountIds(accountNames []string) ([]uint32, er
 	panic("not supported in internal sql executor")
 }
 
-func (c *compilerContext) Stats(obj *plan.ObjectRef) bool {
+func (c *compilerContext) Stats(obj *plan.ObjectRef) (*pb.StatsInfo, error) {
 	t, err := c.getRelation(obj.GetSchemaName(), obj.GetObjName())
 	if err != nil {
-		return false
+		return nil, err
 	}
-	s := c.GetStatsCache().GetStatsInfoMap(t.GetTableID(c.ctx), true)
-	if s == nil {
-		return false
-	}
-	return t.Stats(c.ctx, nil, s)
-}
-
-func (c *compilerContext) GetStatsCache() *plan.StatsCache {
-	if c.statsCache == nil {
-		c.statsCache = plan.NewStatsCache()
-	}
-	return c.statsCache
+	return t.Stats(c.ctx, true), nil
 }
 
 func (c *compilerContext) GetSubscriptionMeta(dbName string) (*plan.SubscriptionMeta, error) {

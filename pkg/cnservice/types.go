@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/matrixorigin/matrixone/pkg/cacheservice"
 	"github.com/matrixorigin/matrixone/pkg/clusterservice"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/morpc"
@@ -39,6 +38,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/pb/metadata"
 	"github.com/matrixorigin/matrixone/pkg/pb/txn"
 	"github.com/matrixorigin/matrixone/pkg/queryservice"
+	qclient "github.com/matrixorigin/matrixone/pkg/queryservice/client"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan"
 	"github.com/matrixorigin/matrixone/pkg/taskservice"
 	"github.com/matrixorigin/matrixone/pkg/txn/client"
@@ -541,7 +541,7 @@ type service struct {
 		engine engine.Engine,
 		fService fileservice.FileService,
 		lockService lockservice.LockService,
-		queryService queryservice.QueryService,
+		queryClient qclient.QueryClient,
 		hakeeper logservice.CNHAKeeperClient,
 		udfService udf.Service,
 		cli client.TxnClient,
@@ -564,8 +564,10 @@ type service struct {
 	moCluster              clusterservice.MOCluster
 	lockService            lockservice.LockService
 	sessionMgr             *queryservice.SessionManager
-	// queryService is used to send query request between CN services.
+	// queryService is used to handle query request from other CN service.
 	queryService queryservice.QueryService
+	// queryClient is used to send query request to other CN services.
+	queryClient qclient.QueryClient
 	// udfService is used to handle non-sql udf
 	udfService udf.Service
 
@@ -580,10 +582,9 @@ type service struct {
 		storageFactory taskservice.TaskStorageFactory
 	}
 
-	addressMgr  address.AddressManager
-	gossipNode  *gossip.Node
-	cacheServer cacheservice.CacheService
-	config      *util.ConfigData
+	addressMgr address.AddressManager
+	gossipNode *gossip.Node
+	config     *util.ConfigData
 }
 
 func dumpCnConfig(cfg Config) (map[string]*logservicepb.ConfigItem, error) {

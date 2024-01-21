@@ -16,7 +16,10 @@ package cnservice
 
 import (
 	"context"
+
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
+	"github.com/matrixorigin/matrixone/pkg/defines"
+	"github.com/matrixorigin/matrixone/pkg/fileservice"
 	"github.com/matrixorigin/matrixone/pkg/lockservice"
 	pblock "github.com/matrixorigin/matrixone/pkg/pb/lock"
 	"github.com/matrixorigin/matrixone/pkg/pb/query"
@@ -25,18 +28,34 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/pb/txn"
 	"github.com/matrixorigin/matrixone/pkg/perfcounter"
 	"github.com/matrixorigin/matrixone/pkg/queryservice"
+	qclient "github.com/matrixorigin/matrixone/pkg/queryservice/client"
 	"github.com/matrixorigin/matrixone/pkg/sql/plan/function/ctl"
 	"github.com/matrixorigin/matrixone/pkg/txn/client"
 )
 
-func (s *service) initQueryService() {
-	svc, err := queryservice.NewQueryService(s.cfg.UUID,
+func (s *service) initQueryService() error {
+	if s.gossipNode != nil {
+		s.gossipNode.SetListenAddrFn(s.gossipListenAddr)
+		s.gossipNode.SetServiceAddrFn(s.gossipServiceAddr)
+		s.gossipNode.SetCacheServerAddrFn(s.queryServiceServiceAddr)
+		if err := s.gossipNode.Create(); err != nil {
+			return err
+		}
+	}
+
+	var err error
+	s.queryService, err = queryservice.NewQueryService(s.cfg.UUID,
 		s.queryServiceListenAddr(), s.cfg.RPC)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	s.queryService = svc
 	s.initQueryCommandHandler()
+
+	s.queryClient, err = qclient.NewQueryClient(s.cfg.UUID, s.cfg.RPC)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *service) initQueryCommandHandler() {
@@ -50,6 +69,8 @@ func (s *service) initQueryCommandHandler() {
 	s.queryService.AddHandleFunc(query.CmdMethod_GetCommit, s.handleGetCommit, false)
 	s.queryService.AddHandleFunc(query.CmdMethod_ShowProcessList, s.handleShowProcessList, false)
 	s.queryService.AddHandleFunc(query.CmdMethod_RunTask, s.handleRunTask, false)
+	s.queryService.AddHandleFunc(query.CmdMethod_GetCacheData, s.handleGetCacheData, false)
+	s.queryService.AddHandleFunc(query.CmdMethod_GetStatsInfo, s.handleGetStatsInfo, false)
 }
 
 func (s *service) handleKillConn(ctx context.Context, req *query.Request, resp *query.Response) error {
@@ -295,5 +316,28 @@ func (s *service) handleGetCacheInfo(ctx context.Context, req *query.Request, re
 		}
 	})
 
+	return nil
+}
+
+// handleGetCacheData reads the cache data from the local data cache in fileservice.
+func (s *service) handleGetCacheData(ctx context.Context, req *query.Request, resp *query.Response) error {
+	sharedFS, err := fileservice.Get[fileservice.FileService](s.fileService, defines.SharedFileServiceName)
+	if err != nil {
+		return err
+	}
+	return fileservice.HandleRemoteRead(ctx, sharedFS, req, &query.WrappedResponse{
+		Response: resp,
+	})
+}
+
+func (s *service) handleGetStatsInfo(ctx context.Context, req *query.Request, resp *query.Response) error {
+	if req.GetStatsInfoRequest == nil {
+		return moerr.NewInternalError(ctx, "bad request")
+	}
+	// The parameter sync is false, as the read request is from remote node,
+	// and we do not need wait for the data sync.
+	resp.GetStatsInfoResponse = &query.GetStatsInfoResponse{
+		StatsInfo: s.storeEngine.Stats(ctx, *req.GetStatsInfoRequest.StatsInfoKey, false),
+	}
 	return nil
 }
