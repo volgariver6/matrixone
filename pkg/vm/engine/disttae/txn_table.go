@@ -56,6 +56,11 @@ func (tbl *txnTable) getEngine() engine.Engine {
 }
 
 func (tbl *txnTable) Stats(ctx context.Context, sync bool) *pb.StatsInfo {
+	_, err := tbl.getPartitionState(ctx)
+	if err != nil {
+		logutil.Errorf("failed to get stats info of table %d", tbl.tableId)
+		return nil
+	}
 	e := tbl.getEngine()
 	return e.Stats(ctx, pb.StatsInfoKey{
 		DatabaseID: tbl.db.databaseId,
@@ -1869,6 +1874,7 @@ func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
 		return
 	}
 
+	tbl.db.txn.engine.globalStats.notifyLogtailUpdate(tbl.tableId)
 	tbl.logtailUpdated = true
 	return nil
 }
