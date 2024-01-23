@@ -402,6 +402,7 @@ func (p *PartitionState) HandleObjectDelete(bat *api.Batch) {
 }
 
 func (p *PartitionState) HandleObjectInsert(bat *api.Batch, fs fileservice.FileService) {
+	logutil.Infof("liubo: object insert")
 	statsVec := mustVectorFromProto(bat.Vecs[2])
 	stateCol := vector.MustFixedCol[bool](mustVectorFromProto(bat.Vecs[3]))
 	sortedCol := vector.MustFixedCol[bool](mustVectorFromProto(bat.Vecs[4]))
@@ -615,6 +616,7 @@ func (p *PartitionState) HandleMetadataInsert(
 	ctx context.Context,
 	fs fileservice.FileService,
 	input *api.Batch) {
+	logutil.Infof("liubo: metadata insert")
 	ctx, task := trace.NewTask(ctx, "PartitionState.HandleMetadataInsert")
 	defer task.End()
 

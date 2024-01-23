@@ -190,6 +190,7 @@ func (gs *GlobalStats) Get(ctx context.Context, key pb.StatsInfoKey, sync bool) 
 }
 
 func (gs *GlobalStats) enqueue(tail *logtail.TableLogtail) {
+	logutil.Infof("liubo: enqueue tail %+v", tail)
 	select {
 	case gs.tailC <- tail:
 	default:
@@ -260,8 +261,17 @@ func (gs *GlobalStats) consumeLogtail(tail *logtail.TableLogtail) {
 }
 
 func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
+	var pri bool
+	tb := gs.engine.catalog.GetTableById(key.DatabaseID, key.TableID)
+	if tb.Name == "t1" || tb.Name == "t2" || tb.Name == "t3" {
+		pri = true
+	}
+
 	ts, ok := gs.updated[key]
 	if ok && time.Since(ts) < MinUpdateInterval {
+		if pri {
+			logutil.Infof("liubo: ---- 1")
+		}
 		return
 	}
 
@@ -272,6 +282,9 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 	defer func() {
 		gs.mu.Lock()
 		defer gs.mu.Unlock()
+		if pri {
+			logutil.Infof("liubo: ---- 2, %+v", gs.mu.statsInfoMap)
+		}
 		gs.mu.statsInfoMap[key] = stats
 
 		// If it is the first time that the stats info is updated,
@@ -288,6 +301,9 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 			})
 		}
 
+		if pri {
+			logutil.Infof("liubo: ---- 3, %+v", *stats)
+		}
 		// update the time to current time only if the stats is not nil.
 		if stats.ApproxObjectNumber > 0 {
 			gs.updated[key] = time.Now()
@@ -325,7 +341,10 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 
 	if approxObjectNum == 0 {
 		// There are no objects flushed yet.
+		logutil.Infof("liubo: ---- 4 app num 0")
 		return
+	} else {
+		logutil.Infof("liubo: ---- 4 app num not 0, %d", approxObjectNum)
 	}
 
 	// the time used to init stats info is not need to be too precise.
