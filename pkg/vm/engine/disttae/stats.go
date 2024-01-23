@@ -84,6 +84,22 @@ func newUpdateStatsRequest(
 	}
 }
 
+type logtailUpdate struct {
+	c  chan uint64
+	mu struct {
+		sync.Mutex
+		updated map[uint64]struct{}
+	}
+}
+
+func newLogtailUpdate() *logtailUpdate {
+	u := &logtailUpdate{
+		c: make(chan uint64, 1000),
+	}
+	u.mu.updated = make(map[uint64]struct{})
+	return u
+}
+
 type GlobalStats struct {
 	ctx context.Context
 
@@ -97,10 +113,12 @@ type GlobalStats struct {
 
 	updateC chan pb.StatsInfoKey
 
-	// updated is used to control the frequency of updating stats info.
+	// statsUpdated is used to control the frequency of updating stats info.
 	// It is not necessary to update stats info too frequently.
 	// It records the update time of the stats info key.
-	updated map[pb.StatsInfoKey]time.Time
+	statsUpdated sync.Map
+
+	logtailUpdate *logtailUpdate
 
 	// tableLogtailCounter is the counter of the logtail entry of stats info key.
 	tableLogtailCounter map[pb.StatsInfoKey]int
@@ -130,7 +148,7 @@ func NewGlobalStats(
 		engine:              e,
 		tailC:               make(chan *logtail.TableLogtail, 10000),
 		updateC:             make(chan pb.StatsInfoKey, 1000),
-		updated:             make(map[pb.StatsInfoKey]time.Time),
+		logtailUpdate:       newLogtailUpdate(),
 		tableLogtailCounter: make(map[pb.StatsInfoKey]int),
 		KeyRouter:           keyRouter,
 	}
@@ -216,7 +234,7 @@ func (gs *GlobalStats) updateWorker(ctx context.Context) {
 			return
 
 		case key := <-gs.updateC:
-			gs.updateTableStats(key)
+			go gs.updateTableStats(key)
 		}
 	}
 }
@@ -259,9 +277,47 @@ func (gs *GlobalStats) consumeLogtail(tail *logtail.TableLogtail) {
 	}
 }
 
+func (gs *GlobalStats) notifyLogtailUpdate(tid uint64) {
+	gs.logtailUpdate.mu.Lock()
+	defer gs.logtailUpdate.mu.Unlock()
+	_, ok := gs.logtailUpdate.mu.updated[tid]
+	if ok {
+		return
+	}
+	gs.logtailUpdate.mu.updated[tid] = struct{}{}
+	gs.logtailUpdate.c <- tid
+}
+
+func (gs *GlobalStats) waitLogtailUpdated(tid uint64) {
+	gs.logtailUpdate.mu.Lock()
+	_, ok := gs.logtailUpdate.mu.updated[tid]
+	gs.logtailUpdate.mu.Unlock()
+	if ok {
+		return
+	}
+	var done bool
+	for {
+		if done {
+			return
+		}
+		select {
+		case <-gs.ctx.Done():
+			return
+
+		case i := <-gs.logtailUpdate.c:
+			if i == tid {
+				done = true
+			}
+		}
+	}
+}
+
 func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
-	ts, ok := gs.updated[key]
-	if ok && time.Since(ts) < MinUpdateInterval {
+	// wait until the table's logtail has been updated.
+	gs.waitLogtailUpdated(key.TableID)
+
+	ts, ok := gs.statsUpdated.Load(key)
+	if ok && time.Since(ts.(time.Time)) < MinUpdateInterval {
 		return
 	}
 
@@ -276,7 +332,7 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 
 		// If it is the first time that the stats info is updated,
 		// send it to key router.
-		if _, ok := gs.updated[key]; !ok && gs.KeyRouter != nil && updated {
+		if _, ok := gs.statsUpdated.Load(key); !ok && gs.KeyRouter != nil && updated {
 			gs.KeyRouter.AddItem(gossip.CommonItem{
 				Operation: gossip.Operation_Set,
 				Key: &gossip.CommonItem_StatsInfoKey{
@@ -290,7 +346,7 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 
 		// update the time to current time only if the stats is not nil.
 		if stats.ApproxObjectNumber > 0 {
-			gs.updated[key] = time.Now()
+			gs.statsUpdated.Store(key, time.Now())
 		}
 
 		// Notify all the waiters to read the new stats info.
