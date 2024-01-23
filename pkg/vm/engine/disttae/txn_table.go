@@ -69,6 +69,11 @@ func (tbl *txnTable) Stats(ctx context.Context, sync bool) *pb.StatsInfo {
 }
 
 func (tbl *txnTable) Rows(ctx context.Context) (uint64, error) {
+	_, err := tbl.getPartitionState(ctx)
+	if err != nil {
+		logutil.Errorf("failed to get stats info of table %d", tbl.tableId)
+		return 0, err
+	}
 	e := tbl.getEngine()
 	writes := make([]Entry, 0, len(tbl.db.txn.writes))
 	writes = tbl.db.txn.getTableWrites(tbl.db.databaseId, tbl.tableId, writes)
@@ -126,6 +131,11 @@ func (tbl *txnTable) Rows(ctx context.Context) (uint64, error) {
 }
 
 func (tbl *txnTable) Size(ctx context.Context, columnName string) (uint64, error) {
+	_, err := tbl.getPartitionState(ctx)
+	if err != nil {
+		logutil.Errorf("failed to get stats info of table %d", tbl.tableId)
+		return 0, err
+	}
 	e := tbl.getEngine()
 	ts := types.TimestampToTS(tbl.db.txn.op.SnapshotTS())
 	part, err := tbl.getPartitionState(ctx)
@@ -1835,6 +1845,7 @@ func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
 	}
 	if _, created := tbl.db.txn.createMap.Load(
 		genTableKey(accountId, tbl.tableName, tbl.db.databaseId)); created {
+		tbl.db.txn.engine.globalStats.notifyLogtailUpdate(tbl.tableId)
 		return
 	}
 
