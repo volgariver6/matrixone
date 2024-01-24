@@ -1833,6 +1833,11 @@ func (tbl *txnTable) UpdateObjectInfos(ctx context.Context) (err error) {
 }
 
 func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
+	defer func() {
+		if err == nil {
+			tbl.db.txn.engine.globalStats.notifyLogtailUpdate(tbl.tableId)
+		}
+	}()
 	// if the logtail is updated, skip
 	if tbl.logtailUpdated {
 		return
@@ -1845,7 +1850,6 @@ func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
 	}
 	if _, created := tbl.db.txn.createMap.Load(
 		genTableKey(accountId, tbl.tableName, tbl.db.databaseId)); created {
-		tbl.db.txn.engine.globalStats.notifyLogtailUpdate(tbl.tableId)
 		return
 	}
 
@@ -1885,7 +1889,6 @@ func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
 		return
 	}
 
-	tbl.db.txn.engine.globalStats.notifyLogtailUpdate(tbl.tableId)
 	tbl.logtailUpdated = true
 	return nil
 }
