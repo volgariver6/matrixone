@@ -1836,6 +1836,7 @@ func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
 	defer func() {
 		if err == nil {
 			tbl.db.txn.engine.globalStats.notifyLogtailUpdate(tbl.tableId)
+			tbl.logtailUpdated = true
 		}
 	}()
 	// if the logtail is updated, skip
@@ -1889,7 +1890,6 @@ func (tbl *txnTable) updateLogtail(ctx context.Context) (err error) {
 		return
 	}
 
-	tbl.logtailUpdated = true
 	return nil
 }
 

@@ -338,7 +338,6 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 	defer func() {
 		gs.mu.Lock()
 		defer gs.mu.Unlock()
-		gs.mu.statsInfoMap[key] = stats
 
 		// If it is the first time that the stats info is updated,
 		// send it to key router.
@@ -356,7 +355,10 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 
 		// update the time to current time only if the stats is not nil.
 		if stats.ApproxObjectNumber > 0 {
+			gs.mu.statsInfoMap[key] = stats
 			gs.statsUpdated.Store(key, time.Now())
+		} else {
+			gs.mu.statsInfoMap[key] = nil
 		}
 
 		// Notify all the waiters to read the new stats info.
