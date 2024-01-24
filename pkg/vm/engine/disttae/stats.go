@@ -285,7 +285,11 @@ func (gs *GlobalStats) notifyLogtailUpdate(tid uint64) {
 		return
 	}
 	gs.logtailUpdate.mu.updated[tid] = struct{}{}
-	gs.logtailUpdate.c <- tid
+
+	select {
+	case gs.logtailUpdate.c <- tid:
+	default:
+	}
 }
 
 func (gs *GlobalStats) waitLogtailUpdated(tid uint64) {
@@ -298,6 +302,12 @@ func (gs *GlobalStats) waitLogtailUpdated(tid uint64) {
 	var done bool
 	for {
 		if done {
+			return
+		}
+		gs.logtailUpdate.mu.Lock()
+		_, ok := gs.logtailUpdate.mu.updated[tid]
+		gs.logtailUpdate.mu.Unlock()
+		if ok {
 			return
 		}
 		select {
