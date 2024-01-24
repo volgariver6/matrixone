@@ -72,6 +72,7 @@ func (s *service) initDistributedTAE(
 		fs,
 		client,
 		hakeeper,
+		s.gossipNode.StatsKeyRouter(),
 	)
 	pu.StorageEngine = s.storeEngine
 
