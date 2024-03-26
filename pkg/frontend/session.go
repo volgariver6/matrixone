@@ -2457,6 +2457,7 @@ func (p *prepareStmtMigration) Migrate(ses *Session) error {
 	if !strings.HasPrefix(strings.ToLower(p.sql), "prepare") {
 		p.sql = fmt.Sprintf("prepare %s from %s", p.name, p.sql)
 	}
+	logutil.Infof("liubo: migrate cid: %d, sql: %s", ses.GetConnectionID(), p.sql)
 	stmts, err := mysql.Parse(ses.requestCtx, p.sql, v.(int64))
 	if err != nil {
 		return err

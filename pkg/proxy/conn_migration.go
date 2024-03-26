@@ -20,6 +20,7 @@ import (
 
 	"github.com/matrixorigin/matrixone/pkg/clusterservice"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/pb/metadata"
 	"github.com/matrixorigin/matrixone/pkg/pb/query"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
@@ -28,6 +29,8 @@ import (
 func (c *clientConn) getQueryAddress(addr string) string {
 	var queryAddr string
 	c.moCluster.GetCNService(clusterservice.NewSelector(), func(service metadata.CNService) bool {
+		logutil.Infof("liubo: target addr: %s, service sql addr: %s, service query addr: %s",
+			addr, service.SQLAddress, service.QueryAddress)
 		if service.SQLAddress == addr {
 			queryAddr = service.QueryAddress
 			return false
@@ -37,14 +40,14 @@ func (c *clientConn) getQueryAddress(addr string) string {
 	return queryAddr
 }
 
-func (c *clientConn) migrateConnFrom(addr string) (*query.MigrateConnFromResponse, error) {
+func (c *clientConn) migrateConnFrom(sqlAddr string) (*query.MigrateConnFromResponse, error) {
 	req := c.queryService.NewRequest(query.CmdMethod_MigrateConnFrom)
 	req.MigrateConnFromRequest = &query.MigrateConnFromRequest{
 		ConnID: c.connID,
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, time.Second*3)
 	defer cancel()
-	addr = c.getQueryAddress(addr)
+	addr := c.getQueryAddress(sqlAddr)
 	if addr == "" {
 		return nil, moerr.NewInternalError(c.ctx, "cannot get query service address")
 	}
