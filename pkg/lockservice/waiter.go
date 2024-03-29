@@ -188,7 +188,7 @@ OUT:
 		select {
 		case <-time.After(time.Minute * 5):
 			for _, txn := range w.waitFor {
-				logutil.Infof("liubo: wait for txn: %x", txn)
+				logutil.Infof("liubo: timeout, %x wait for txn: %x", w.txn.TxnID, txn)
 			}
 		case v := <-w.c:
 			apply(v)

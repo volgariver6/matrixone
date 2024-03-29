@@ -16,6 +16,7 @@ package lockservice
 
 import (
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -187,6 +188,12 @@ func (mw *waiterEvents) check(timeout time.Duration) {
 	stopAt := -1
 	now := time.Now()
 	for i, w := range mw.mu.blockedWaiters {
+		ss := now.Sub(w.waitAt)
+		if ss > time.Minute*5 {
+			for _, txn := range w.waitFor {
+				logutil.Infof("liubo: timeout check, current %x, %x", w.txn.TxnID, txn)
+			}
+		}
 		if now.Sub(w.waitAt) < timeout {
 			stopAt = i
 			break

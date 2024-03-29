@@ -85,6 +85,27 @@ func (f *Future) Get() (Message, error) {
 	}
 }
 
+func (f *Future) Get1(fun func(), t time.Duration) (Message, error) {
+	// we have to wait until the message is written, otherwise it will result in the message still
+	// waiting in the send queue after the Get returns, causing concurrent reading and writing on the
+	// request.
+	if err := f.waitSendCompleted(); err != nil {
+		return nil, err
+	}
+	for {
+		select {
+		case <-f.send.Ctx.Done():
+			return nil, f.send.Ctx.Err()
+		case resp := <-f.c:
+			return resp, nil
+		case <-time.After(t):
+			fun()
+		case err := <-f.errC:
+			return nil, err
+		}
+	}
+}
+
 // Close closes the future.
 func (f *Future) Close() {
 	f.mu.Lock()

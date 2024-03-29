@@ -16,6 +16,7 @@ package lockservice
 
 import (
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"sync"
 	"time"
 
@@ -81,7 +82,14 @@ func (c *client) Send(ctx context.Context, request *pb.Request) (*pb.Response, e
 	}
 	defer f.Close()
 
-	v, err := f.Get()
+	var v morpc.Message
+	if request.Method == pb.Method_Lock {
+		v, err = f.Get1(func() {
+			logutil.Infof("liubo: timeout lock, %x, table id: %x", request.Lock.TxnID, request.LockTable.DebugString())
+		}, time.Minute*4)
+	} else {
+		v, err = f.Get()
+	}
 	if err != nil {
 		return nil, err
 	}
