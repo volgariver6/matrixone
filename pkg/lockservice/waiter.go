@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -181,16 +182,25 @@ func (w *waiter) wait(ctx context.Context) notifyValue {
 		logWaiterGetNotify(w, v)
 		w.setStatus(completed)
 	}
-	select {
-	case v := <-w.c:
-		apply(v)
-		return v
-	case <-ctx.Done():
+
+OUT:
+	for {
 		select {
+		case <-time.After(time.Minute * 5):
+			for _, txn := range w.waitFor {
+				logutil.Infof("liubo: wait for txn: %x", txn)
+			}
 		case v := <-w.c:
 			apply(v)
 			return v
-		default:
+		case <-ctx.Done():
+			select {
+			case v := <-w.c:
+				apply(v)
+				return v
+			default:
+				break OUT
+			}
 		}
 	}
 
