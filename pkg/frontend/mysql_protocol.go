@@ -25,6 +25,7 @@ import (
 	"math"
 	"math/rand"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1703,6 +1704,7 @@ func (mp *MysqlProtocolImpl) makeOKPayload(affectedRows, lastInsertId uint64, st
 	} else if (mp.capability & CLIENT_TRANSACTIONS) != 0 {
 		pos = mp.io.WriteUint16(data, pos, statusFlags)
 	}
+	logutil.Infof("liubo: ok pay, cid %d, status %d, %s", mp.connectionID, statusFlags, debug.Stack())
 
 	if mp.capability&CLIENT_SESSION_TRACK != 0 {
 		//TODO:implement it

@@ -3048,6 +3048,10 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 		case *tree.SetVar, *tree.SetTransaction, *tree.BackupStart, *tree.CreateConnector, *tree.DropConnector,
 			*tree.PauseDaemonTask, *tree.ResumeDaemonTask, *tree.CancelDaemonTask:
 			resp := mce.setResponse(i, len(cws), rspLen)
+			formatCtx := tree.NewFmtCtx(dialect.MYSQL)
+			stmt.Format(formatCtx)
+			sql1 := formatCtx.String()
+			logutil.Infof("liubo: %d, set var %s", mce.GetSession().GetConnectionID(), sql1)
 			if err2 := proto.SendResponse(requestCtx, resp); err2 != nil {
 				return moerr.NewInternalError(requestCtx, "routine send response failed. error:%v ", err2)
 			}
@@ -3757,6 +3761,7 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 				mysql COM_QUERY response: End after the data row has been sent.
 				After all row data has been sent, it sends the EOF or OK packet.
 			*/
+			ses.maybeUnsetTxnStatus()
 			err = proto.sendEOFOrOkPacket(0, ses.GetServerStatus())
 			if err != nil {
 				return
@@ -3845,6 +3850,7 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 			mysql COM_QUERY response: End after the data row has been sent.
 			After all row data has been sent, it sends the EOF or OK packet.
 		*/
+		ses.maybeUnsetTxnStatus()
 		err = proto.sendEOFOrOkPacket(0, ses.GetServerStatus())
 		if err != nil {
 			return
@@ -4014,6 +4020,7 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 				mysql COM_QUERY response: End after the data row has been sent.
 				After all row data has been sent, it sends the EOF or OK packet.
 			*/
+			ses.maybeUnsetTxnStatus()
 			err = proto.sendEOFOrOkPacket(0, ses.GetServerStatus())
 			if err != nil {
 				return

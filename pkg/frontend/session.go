@@ -1429,6 +1429,18 @@ func (ses *Session) GetSessionVar(name string) (interface{}, error) {
 	}
 }
 
+func (ses *Session) GetSessionVarLocked(name string) (interface{}, error) {
+	if def, gVal, ok := ses.gSysVars.GetGlobalSysVar(name); ok {
+		ciname := strings.ToLower(name)
+		if def.GetScope() == ScopeGlobal {
+			return gVal, nil
+		}
+		return ses.sysVars[ciname], nil
+	} else {
+		return nil, moerr.NewInternalError(ses.GetRequestContext(), errorSystemVariableDoesNotExist())
+	}
+}
+
 func (ses *Session) CopyAllSessionVars() map[string]interface{} {
 	ses.mu.Lock()
 	defer ses.mu.Unlock()

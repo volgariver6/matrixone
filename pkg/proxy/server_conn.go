@@ -20,6 +20,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/frontend"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,7 @@ type ServerConn interface {
 	// After it finished, server connection should be closed immediately because
 	// it is a temp connection.
 	// The first return value indicates that if the execution result is OK.
+	// NB: the stmt can only be simple stmt, which returns OK or Err only.
 	ExecStmt(stmt internalStmt, resp chan<- []byte) (bool, error)
 	// Close closes the connection to CN server.
 	Close() error
@@ -160,13 +162,17 @@ func (s *serverConn) ExecStmt(stmt internalStmt, resp chan<- []byte) (bool, erro
 	req[0] = byte(stmt.cmdType)
 	req = append(req, []byte(stmt.s)...)
 	s.mysqlProto.SetSequenceID(0)
+	logutil.Infof("liubo: %d, before send %v to server", s.backendConnID, req)
 	if err := s.mysqlProto.WritePacket(req); err != nil {
 		return false, err
 	}
+	logutil.Infof("liubo: %d, after send to server", s.backendConnID)
 	execOK := true
 	for {
 		// readPacket makes sure return value is a whole MySQL packet.
+		logutil.Infof("liubo: %d, before read from server", s.backendConnID)
 		res, err := s.readPacket()
+		logutil.Infof("liubo: %d, after read from server, %v", s.backendConnID, res)
 		if err != nil {
 			return false, err
 		}

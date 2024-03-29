@@ -17,6 +17,7 @@ package proxy
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"io"
 	"net"
 	"sync"
@@ -62,18 +63,12 @@ type MySQLConn struct {
 // newMySQLConn creates a new MySQLConn. reqC and respC are used for client
 // connection to handle events from client.
 func newMySQLConn(
-	name string, c net.Conn, sz int, reqC chan IEvent, respC chan []byte, prevBuf *msgBuf, cid uint32,
+	name string, c net.Conn, sz int, reqC chan IEvent, respC chan []byte, cid uint32,
 ) *MySQLConn {
-	mc := &MySQLConn{
+	return &MySQLConn{
 		Conn:   c,
-		msgBuf: prevBuf,
+		msgBuf: newMsgBuf(name, c, sz, reqC, respC, cid),
 	}
-	if mc.msgBuf == nil {
-		mc.msgBuf = newMsgBuf(name, c, sz, reqC, respC, cid)
-	} else {
-		mc.msgBuf.src = c
-	}
-	return mc
 }
 
 // msgBuf holds a buffer to save MySQL packets. It is mainly used to
@@ -189,6 +184,7 @@ func (b *msgBuf) consumeMsg(msg []byte, transfer *atomic.Bool, wg *sync.WaitGrou
 }
 
 func (b *msgBuf) consumeClient(msg []byte) bool {
+	logutil.Infof("liubo: %d, client, %v", b.cid, msg)
 	e, r := makeEvent(msg, b)
 	if e == nil {
 		return false
@@ -201,6 +197,7 @@ func (b *msgBuf) consumeClient(msg []byte) bool {
 }
 
 func (b *msgBuf) consumeServer(msg []byte, transfer *atomic.Bool, wg *sync.WaitGroup) bool {
+	logutil.Infof("liubo: %d, server, %v", b.cid, msg)
 	inTxn := true
 
 	// For the server->client pipe, we should the transaction status from the
@@ -213,6 +210,7 @@ func (b *msgBuf) consumeServer(msg []byte, transfer *atomic.Bool, wg *sync.WaitG
 	} else {
 		b.setTxnStatus(0)
 	}
+	logutil.Infof("liubo: %d, server, inTxn: %v, tran: %v", b.cid, inTxn, transfer.Load())
 
 	if wg != nil && transfer != nil && !inTxn && transfer.Load() {
 		wg.Add(1)
@@ -379,6 +377,9 @@ func (b *msgBuf) receiveAtLeast(n int) error {
 		b.begin = 0
 	}
 	c, err := io.ReadAtLeast(b.src, b.buf[b.end:b.availLen], minReadSize)
+	if b.name == connServerName {
+		logutil.Infof("liubo: %d, server, read %v", b.cid, b.buf[b.end:b.end+c])
+	}
 	b.end += c
 	return err
 }

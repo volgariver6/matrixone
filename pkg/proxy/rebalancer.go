@@ -16,18 +16,18 @@ package proxy
 
 import (
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/common/moerr"
+	"go.uber.org/zap"
 	"math"
 	"sync"
 	"time"
 
 	"github.com/matrixorigin/matrixone/pkg/clusterservice"
 	"github.com/matrixorigin/matrixone/pkg/common/log"
-	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/stopper"
 	"github.com/matrixorigin/matrixone/pkg/pb/metadata"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
 	"github.com/matrixorigin/matrixone/pkg/vm/engine/disttae/route"
-	"go.uber.org/zap"
 )
 
 const (
@@ -249,12 +249,7 @@ func (r *rebalancer) handleTransfer(ctx context.Context) {
 			if err := tun.transfer(ctx); err != nil {
 				if !moerr.IsMoErrCode(err, moerr.OkExpectedNotSafeToStartTransfer) {
 					r.logger.Error("failed to do transfer", zap.Error(err))
-					v2.ProxyTransferFailCounter.Inc()
-				} else {
-					v2.ProxyTransferAbortCounter.Inc()
 				}
-			} else {
-				v2.ProxyTransferSuccessCounter.Inc()
 			}
 
 			// After transfer the tunnel, remove it from the inflight map.
