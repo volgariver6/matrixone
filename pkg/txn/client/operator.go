@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	gotrace "runtime/trace"
 	"sync"
 	"time"
@@ -110,8 +111,9 @@ func WithTxnLockService(lockService lockservice.LockService) TxnOption {
 
 // WithTxnCreateBy set txn create by.Used to check leak txn
 func WithTxnCreateBy(createBy string) TxnOption {
+	sta := string(debug.Stack())
 	return func(tc *txnOperator) {
-		tc.option.createBy = createBy
+		tc.option.createBy = createBy + ", liubo: ---" + sta
 	}
 }
 

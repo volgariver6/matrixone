@@ -17,6 +17,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"io"
 	"net"
 	"sync"
@@ -230,7 +231,10 @@ func (t *tunnel) kickoff() error {
 func (t *tunnel) replaceServerConn(newServerConn *MySQLConn, sync bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_ = t.mu.serverConn.Close()
+	err := t.mu.serverConn.Close()
+	if err != nil {
+		logutil.Infof("liubo: replace conn, close err: %v", err)
+	}
 	t.mu.serverConn = newServerConn
 	setPeer(t.mu.clientConn.msgBuf, t.mu.serverConn.msgBuf)
 
