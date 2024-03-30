@@ -3736,10 +3736,12 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 				mysql COM_QUERY response: End after the column has been sent.
 				send EOF packet
 			*/
+			logutil.Infof("liubo: before send col eof: %d", columns)
 			err = proto.SendEOFPacketIf(0, ses.GetServerStatus())
 			if err != nil {
 				return
 			}
+			logutil.Infof("liubo: after send col eof: %d", columns)
 
 			runBegin := time.Now()
 			/*
@@ -3752,9 +3754,9 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 			}
 
 			// only log if run time is longer than 1s
-			if time.Since(runBegin) > time.Second {
-				logInfo(ses, ses.GetDebugString(), fmt.Sprintf("time of Exec.Run : %s", time.Since(runBegin).String()))
-			}
+			// if time.Since(runBegin) > time.Second {
+			logInfo(ses, ses.GetDebugString(), fmt.Sprintf("liubo: time of Exec.Run : %s", time.Since(runBegin).String()))
+			// }
 
 			/*
 				Step 3: Say goodbye
@@ -3766,6 +3768,7 @@ func (mce *MysqlCmdExecutor) executeStmt(requestCtx context.Context,
 			if err != nil {
 				return
 			}
+			logutil.Infof("liubo: after send whole eof %v", extendStatus(ses.GetServerStatus()))
 
 			/*
 				Step 4: Serialize the execution plan by json
