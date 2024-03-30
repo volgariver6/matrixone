@@ -396,11 +396,13 @@ func (c *Compile) run(s *Scope) error {
 func (c *Compile) Run(_ uint64) (result *util2.RunResult, err error) {
 	txnOp := c.proc.TxnOperator
 	if txnOp != nil {
+		logutil.Infof("liubo: sql: %s, run1, txn: %x", c.sql, txnOp.Txn().ID)
 		txnOp.EnterRunSql()
 	}
 
 	defer func() {
 		if txnOp != nil {
+			logutil.Infof("liubo: sql: %s, run2, txn: %x", c.sql, txnOp.Txn().ID)
 			txnOp.ExitRunSql()
 		}
 	}()
