@@ -314,7 +314,7 @@ func (b *msgBuf) sendTo(dst io.Writer, transfer *atomic.Bool, wg *sync.WaitGroup
 	if b.name == connServerName {
 		ccc, ok := dst.(net.Conn)
 		if ok {
-			logutil.Infof("liubo: send to client: msg: %v, local: %v, remote: %v", b.buf[readPos:writePos], ccc.LocalAddr(), ccc.RemoteAddr())
+			logutil.Infof("liubo: %d, send to client: msg: %v, local: %v, remote: %v", b.cid, b.buf[readPos:writePos], ccc.LocalAddr(), ccc.RemoteAddr())
 		}
 	}
 	n, err := dst.Write(b.buf[readPos:writePos])
@@ -378,11 +378,18 @@ func (b *msgBuf) receiveAtLeast(n int) error {
 		return nil
 	}
 	minReadSize := n - b.readAvail()
+	if b.name == connClientName {
+		logutil.Infof("liubo: %d, before receive, wa: %d, mr: %d, begin: %d, end: %d",
+			b.cid, b.writeAvail(), minReadSize, b.begin, b.end)
+	}
 	if b.writeAvail() < minReadSize {
 		b.end = copy(b.buf, b.buf[b.begin:b.end])
 		b.begin = 0
 	}
 	c, err := io.ReadAtLeast(b.src, b.buf[b.end:b.availLen], minReadSize)
+	if b.name == connClientName {
+		logutil.Infof("liubo: %d, after receive, c: %d, msg: %v", b.cid, c, b.buf[b.end:b.availLen])
+	}
 	b.end += c
 	return err
 }

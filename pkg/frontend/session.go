@@ -2467,7 +2467,18 @@ func (d *dbMigration) Migrate(ses *Session) error {
 	if d.db == "" {
 		return nil
 	}
-	return doUse(ses.requestCtx, ses, d.db)
+	err := doUse(ses.requestCtx, ses, d.db)
+	if err != nil {
+		rErr := ses.GetTxnHandler().RollbackTxn()
+		if rErr != nil {
+			logutil.Errorf("failed to rollback txn: %v", rErr)
+		}
+		return err
+	}
+	err = ses.GetTxnHandler().CommitTxn()
+	ses.ClearServerStatus(SERVER_STATUS_IN_TRANS)
+	ses.ClearOptionBits(OPTION_BEGIN)
+	return err
 }
 
 type prepareStmtMigration struct {

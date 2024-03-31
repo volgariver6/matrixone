@@ -470,7 +470,7 @@ func (c *clientConn) readPacket() (*frontend.Packet, error) {
 	if proxyAddr, ok := msg.(*ProxyAddr); ok {
 		if proxyAddr.SourceAddress != nil {
 			c.clientInfo.originIP = proxyAddr.SourceAddress
-			logutil.Infof("liubo: addr: %+v", proxyAddr)
+			logutil.Infof("liubo: %d, addr: %+v", c.connID, proxyAddr)
 		}
 		return c.readPacket()
 	}
