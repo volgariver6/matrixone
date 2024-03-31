@@ -388,7 +388,7 @@ func (b *msgBuf) receiveAtLeast(n int) error {
 	}
 	c, err := io.ReadAtLeast(b.src, b.buf[b.end:b.availLen], minReadSize)
 	if b.name == connClientName {
-		logutil.Infof("liubo: %d, after receive, c: %d, msg: %v", b.cid, c, b.buf[b.end:b.availLen])
+		logutil.Infof("liubo: %d, after receive, c: %d, msg: %v", b.cid, c, b.buf[b.end:b.end+c])
 	}
 	b.end += c
 	return err
