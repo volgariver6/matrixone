@@ -197,7 +197,6 @@ func (b *msgBuf) consumeClient(msg []byte) bool {
 }
 
 func (b *msgBuf) consumeServer(msg []byte, transfer *atomic.Bool, wg *sync.WaitGroup) bool {
-	logutil.Infof("liubo: %d, server, %v", b.cid, msg)
 	inTxn := true
 
 	// For the server->client pipe, we should the transaction status from the
@@ -304,6 +303,7 @@ func (b *msgBuf) sendTo(dst io.Writer, transfer *atomic.Bool, wg *sync.WaitGroup
 		writePos += extraLen
 		dataLeft = 0
 	}
+	logutil.Infof("liubo: %d, dataLeft: %d, server, %v", b.cid, dataLeft, b.buf[readPos:writePos])
 	if dataLeft == 0 && b.consumeMsg(b.buf[readPos:writePos], transfer, wg) {
 		return false, nil
 	}
@@ -327,7 +327,9 @@ func (b *msgBuf) sendTo(dst io.Writer, transfer *atomic.Bool, wg *sync.WaitGroup
 
 	// The buffer does not hold all packet data, so continue to read the packet.
 	if dataLeft > 0 {
+		logutil.Infof("liubo: %d, before copy, dataLeft %d", b.cid, dataLeft)
 		m, err := io.CopyN(dst, b.src, int64(dataLeft))
+		logutil.Infof("liubo: %d, after copy, dataLeft %d, m: %d, err: %v", b.cid, dataLeft, m, err)
 		if err != nil {
 			return false, err
 		}
@@ -385,6 +387,8 @@ func (b *msgBuf) receiveAtLeast(n int) error {
 	if b.writeAvail() < minReadSize {
 		b.end = copy(b.buf, b.buf[b.begin:b.end])
 		b.begin = 0
+		logutil.Infof("liubo: %d, before receive11, wa: %d, mr: %d, begin: %d, end: %d",
+			b.cid, b.writeAvail(), minReadSize, b.begin, b.end)
 	}
 	c, err := io.ReadAtLeast(b.src, b.buf[b.end:b.availLen], minReadSize)
 	if b.name == connClientName {

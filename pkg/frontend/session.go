@@ -2459,25 +2459,43 @@ func checkPlanIsInsertValues(proc *process.Process,
 	return false, nil
 }
 
+func commitAfterMigrate(ses *Session, err error) {
+	if err != nil {
+		rErr := ses.GetTxnHandler().RollbackTxn()
+		if rErr != nil {
+			logutil.Errorf("failed to rollback txn: %v", rErr)
+		}
+	}
+
+	// Commit txn manually.
+	err = ses.GetTxnHandler().CommitTxn()
+	ses.ClearServerStatus(SERVER_STATUS_IN_TRANS)
+	ses.ClearOptionBits(OPTION_BEGIN)
+}
+
 type dbMigration struct {
-	db string
+	db       string
+	commitFn func(*Session, error)
+}
+
+func newDBMigration(db string) *dbMigration {
+	return &dbMigration{
+		db:       db,
+		commitFn: commitAfterMigrate,
+	}
 }
 
 func (d *dbMigration) Migrate(ses *Session) error {
 	if d.db == "" {
 		return nil
 	}
-	err := doUse(ses.requestCtx, ses, d.db)
-	if err != nil {
-		rErr := ses.GetTxnHandler().RollbackTxn()
-		if rErr != nil {
-			logutil.Errorf("failed to rollback txn: %v", rErr)
+	var err error
+	defer func() {
+		if d.commitFn != nil {
+			d.commitFn(ses, err)
 		}
-		return err
-	}
-	err = ses.GetTxnHandler().CommitTxn()
-	ses.ClearServerStatus(SERVER_STATUS_IN_TRANS)
-	ses.ClearOptionBits(OPTION_BEGIN)
+	}()
+	err = doUse(ses.requestCtx, ses, d.db)
 	return err
 }
 
@@ -2485,9 +2503,20 @@ type prepareStmtMigration struct {
 	name       string
 	sql        string
 	paramTypes []byte
+	commitFn   func(*Session, error)
+}
+
+func newPrepareStmtMigration(name string, sql string, paramTypes []byte) *prepareStmtMigration {
+	return &prepareStmtMigration{
+		name:       name,
+		sql:        sql,
+		paramTypes: paramTypes,
+		commitFn:   commitAfterMigrate,
+	}
 }
 
 func (p *prepareStmtMigration) Migrate(ses *Session) error {
+	var err error
 	v, err := ses.GetGlobalVar("lower_case_table_names")
 	if err != nil {
 		return err
@@ -2499,6 +2528,11 @@ func (p *prepareStmtMigration) Migrate(ses *Session) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if p.commitFn != nil {
+			p.commitFn(ses, err)
+		}
+	}()
 	if _, err = doPrepareStmt(ses.requestCtx, ses, stmts[0].(*tree.PrepareStmt), p.sql, p.paramTypes); err != nil {
 		return err
 	}
@@ -2506,9 +2540,7 @@ func (p *prepareStmtMigration) Migrate(ses *Session) error {
 }
 
 func (ses *Session) Migrate(req *query.MigrateConnToRequest) error {
-	dbm := dbMigration{
-		db: req.DB,
-	}
+	dbm := newDBMigration(req.DB)
 	if err := dbm.Migrate(ses); err != nil {
 		return err
 	}
@@ -2518,11 +2550,7 @@ func (ses *Session) Migrate(req *query.MigrateConnToRequest) error {
 		if p == nil {
 			continue
 		}
-		pm := prepareStmtMigration{
-			name:       p.Name,
-			sql:        p.SQL,
-			paramTypes: p.ParamTypes,
-		}
+		pm := newPrepareStmtMigration(p.Name, p.SQL, p.ParamTypes)
 		if err := pm.Migrate(ses); err != nil {
 			return err
 		}
