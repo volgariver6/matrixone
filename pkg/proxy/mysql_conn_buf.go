@@ -311,6 +311,12 @@ func (b *msgBuf) sendTo(dst io.Writer, transfer *atomic.Bool, wg *sync.WaitGroup
 	b.writeMu.Lock()
 	defer b.writeMu.Unlock()
 	// Write the data in buffer.
+	if b.name == connServerName {
+		ccc, ok := dst.(net.Conn)
+		if ok {
+			logutil.Infof("liubo: send to client: msg: %v, local: %v, remote: %v", b.buf[readPos:writePos], ccc.LocalAddr(), ccc.RemoteAddr())
+		}
+	}
 	n, err := dst.Write(b.buf[readPos:writePos])
 	if err != nil {
 		return false, err
@@ -377,9 +383,6 @@ func (b *msgBuf) receiveAtLeast(n int) error {
 		b.begin = 0
 	}
 	c, err := io.ReadAtLeast(b.src, b.buf[b.end:b.availLen], minReadSize)
-	if b.name == connServerName {
-		logutil.Infof("liubo: %d, server, read %v", b.cid, b.buf[b.end:b.end+c])
-	}
 	b.end += c
 	return err
 }

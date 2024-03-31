@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/queryservice"
 	"net"
 	"strings"
@@ -469,6 +470,7 @@ func (c *clientConn) readPacket() (*frontend.Packet, error) {
 	if proxyAddr, ok := msg.(*ProxyAddr); ok {
 		if proxyAddr.SourceAddress != nil {
 			c.clientInfo.originIP = proxyAddr.SourceAddress
+			logutil.Infof("liubo: addr: %+v", proxyAddr)
 		}
 		return c.readPacket()
 	}
