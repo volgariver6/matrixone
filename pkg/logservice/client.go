@@ -247,6 +247,8 @@ func (c *managedClient) prepareClient(ctx context.Context) error {
 type client struct {
 	cfg      ClientConfig
 	client   morpc.RPCClient
+	stream   morpc.Stream
+	msgC     chan morpc.Message
 	addr     string
 	pool     *sync.Pool
 	respPool *sync.Pool
@@ -328,15 +330,11 @@ func connectToLogService(ctx context.Context,
 		}
 		c.addr = addr
 		c.client = cc
-		if cfg.ReadOnly {
-			if err := c.connectReadOnly(ctx); err == nil {
-				return c, nil
-			} else {
-				if err := c.close(); err != nil {
-					logutil.Error("failed to close the client", zap.Error(err))
-				}
-				e = err
+		if err1 := c.initStream(addr); err1 != nil {
+			if err := c.close(); err != nil {
+				logutil.Error("failed to close the client", zap.Error(err))
 			}
+			e = err1
 		} else {
 			// TODO: add a test to check whether it works when there is no truncated
 			// LSN known to the logservice.
@@ -351,6 +349,19 @@ func connectToLogService(ctx context.Context,
 		}
 	}
 	return nil, e
+}
+
+func (c *client) initStream(backend string) error {
+	var err error
+	c.stream, err = c.client.NewStream(backend, true)
+	if err != nil {
+		return err
+	}
+	c.msgC, err = c.stream.Receive()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *client) close() error {
@@ -400,6 +411,31 @@ func (c *client) connectReadOnly(ctx context.Context) error {
 	return c.connect(ctx, pb.CONNECT_RO)
 }
 
+func (c *client) send(ctx context.Context, r *RPCRequest) error {
+	r.SetID(c.stream.ID())
+	err := c.stream.Send(ctx, r)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *client) receive(ctx context.Context) (*RPCResponse, error) {
+	select {
+	case <-ctx.Done():
+		logutil.Errorf("logservice context done, err: %v", ctx.Err())
+		return nil, ctx.Err()
+
+	case msg, ok := <-c.msgC:
+		if !ok || msg == nil {
+			logutil.Errorf("logservice stream closed, message is %v, chan closed: %v", msg, !ok)
+			return nil, moerr.NewStreamClosedNoCtx()
+		}
+		m := msg.(*RPCResponse)
+		return m, nil
+	}
+}
+
 func (c *client) request(ctx context.Context,
 	mt pb.MethodType, payload []byte, lsn Lsn,
 	maxSize uint64) (pb.Response, []pb.LogRecord, error) {
@@ -418,18 +454,12 @@ func (c *client) request(ctx context.Context,
 	defer r.Release()
 	r.Request = req
 	r.payload = payload
-	future, err := c.client.Send(ctx, c.addr, r)
-	if err != nil {
+	if err := c.send(ctx, r); err != nil {
 		return pb.Response{}, nil, err
 	}
-	defer future.Close()
-	msg, err := future.Get()
+	response, err := c.receive(ctx)
 	if err != nil {
 		return pb.Response{}, nil, err
-	}
-	response, ok := msg.(*RPCResponse)
-	if !ok {
-		panic("unexpected response type")
 	}
 	resp := response.Response
 	defer response.Release()
@@ -527,7 +557,6 @@ func getRPCClient(
 	// construct morpc.BackendOption
 	backendOpts := []morpc.BackendOption{
 		morpc.WithBackendConnectTimeout(time.Second),
-		morpc.WithBackendHasPayloadResponse(),
 		morpc.WithBackendLogger(logutil.GetGlobalLogger().Named("hakeeper-client-backend")),
 		morpc.WithBackendReadTimeout(readTimeout),
 	}
