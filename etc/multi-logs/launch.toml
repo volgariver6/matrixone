@@ -1,0 +1,14 @@
+logservices = [
+    "./etc/liubo/log1.toml",
+    "./etc/liubo/log2.toml",
+    "./etc/liubo/log3.toml",
+]
+
+dnservices = [
+    "./etc/liubo/dn.toml"
+]
+
+cnservices = [
+    "./etc/liubo/cn1.toml",
+    "./etc/liubo/cn2.toml",
+]
