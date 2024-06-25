@@ -554,9 +554,22 @@ func (ss *Session) SendUpdateResponse(
 ) error {
 	ss.logger.Debug("send incremental logtail", zap.Any("From", from.String()), zap.String("To", to.String()), zap.Int("tables", len(tails)))
 
+	start1 := time.Now()
 	resp := ss.responses.Acquire()
+	if time.Since(start1) > time.Second*10 {
+		ss.logger.Warn("liubo: acquire too long",
+			zap.String("duration", time.Since(start1).String()),
+		)
+	}
 	resp.closeCB = closeCB
+	start2 := time.Now()
 	resp.Response = newUpdateResponse(from, to, tails...)
+	if time.Since(start2) > time.Second*10 {
+		ss.logger.Warn("liubo: new resp too long",
+			zap.String("duration", time.Since(start2).String()),
+			zap.Int("tails len", len(tails)),
+		)
+	}
 	return ss.SendResponse(sendCtx, resp)
 }
 
