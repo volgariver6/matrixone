@@ -152,7 +152,7 @@ func NewGlobalStats(
 		ctx:                 ctx,
 		engine:              e,
 		tailC:               make(chan *logtail.TableLogtail, 10000),
-		updateC:             make(chan pb.StatsInfoKey, 1000),
+		updateC:             make(chan pb.StatsInfoKey, 3000),
 		logtailUpdate:       newLogtailUpdate(),
 		tableLogtailCounter: make(map[pb.StatsInfoKey]int64),
 		KeyRouter:           keyRouter,
@@ -214,7 +214,7 @@ func (gs *GlobalStats) Get(ctx context.Context, key pb.StatsInfoKey, sync bool) 
 			// If the trigger condition is not satisfied, the stats will not be updated
 			// for long time. So we trigger the update here to get the stats info as soon
 			// as possible.
-			gs.triggerUpdate(key)
+			gs.triggerUpdate(key, true)
 
 			logutil.Errorf("get stats before wait %+v", key)
 			// Wait until stats info of the key is updated.
@@ -263,11 +263,15 @@ func (gs *GlobalStats) updateWorker(ctx context.Context) {
 	}
 }
 
-func (gs *GlobalStats) triggerUpdate(key pb.StatsInfoKey) {
+func (gs *GlobalStats) triggerUpdate(key pb.StatsInfoKey, force bool) {
+	if force {
+		gs.updateC <- key
+		return
+	}
+
 	select {
 	case gs.updateC <- key:
 	default:
-		logutil.Errorf("the channel of update table is full")
 	}
 }
 
@@ -277,7 +281,7 @@ func (gs *GlobalStats) consumeLogtail(tail *logtail.TableLogtail) {
 		TableID:    tail.Table.TbId,
 	}
 	if len(tail.CkpLocation) > 0 {
-		gs.triggerUpdate(key)
+		gs.triggerUpdate(key, false)
 	} else if tail.Table != nil {
 		var triggered bool
 		for _, cmd := range tail.Commands {
@@ -285,7 +289,7 @@ func (gs *GlobalStats) consumeLogtail(tail *logtail.TableLogtail) {
 				logtailreplay.IsObjTable(cmd.TableName) ||
 				logtailreplay.IsMetaTable(cmd.TableName) {
 				triggered = true
-				gs.triggerUpdate(key)
+				gs.triggerUpdate(key, false)
 				break
 			}
 		}
@@ -296,7 +300,7 @@ func (gs *GlobalStats) consumeLogtail(tail *logtail.TableLogtail) {
 		}
 		if !triggered && gs.ShouldUpdate(key, gs.tableLogtailCounter[key]) {
 			gs.tableLogtailCounter[key] = 0
-			gs.triggerUpdate(key)
+			gs.triggerUpdate(key, false)
 		}
 	}
 }
