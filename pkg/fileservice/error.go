@@ -44,6 +44,7 @@ func IsRetryableError(err error) bool {
 		strings.Contains(str, "connection reset by peer") ||
 		strings.Contains(str, "connection timed out") ||
 		strings.Contains(str, "dial tcp: lookup") ||
+		strings.Contains(str, "cannot assign requested address") ||
 		strings.Contains(str, "i/o timeout") ||
 		strings.Contains(str, "write: broken pipe") ||
 		strings.Contains(str, "TLS handshake timeout") ||
