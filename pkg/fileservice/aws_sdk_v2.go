@@ -112,6 +112,7 @@ func NewAwsSDKv2(
 	s3Options := []func(*s3.Options){
 		func(opts *s3.Options) {
 			opts.Retryer = newAWSRetryer()
+			opts.HTTPClient = newHTTPClient(args)
 		},
 	}
 
