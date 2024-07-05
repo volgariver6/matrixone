@@ -19,11 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	gotrace "runtime/trace"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -690,7 +692,13 @@ type awsRetryer struct {
 }
 
 func newAWSRetryer() aws.Retryer {
-	retryer := aws.Retryer(retry.NewStandard())
+	retryer := aws.Retryer(retry.NewStandard(
+		func(opts *retry.StandardOptions) {
+			opts.RateLimiter = ratelimit.NewTokenRateLimit(math.MaxInt)
+			opts.RetryCost = 1
+			opts.RetryTimeoutCost = 1
+		},
+	))
 	return &awsRetryer{
 		upstream: retryer,
 	}
