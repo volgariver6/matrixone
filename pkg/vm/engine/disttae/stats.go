@@ -466,6 +466,7 @@ func (gs *GlobalStats) updateTableStats(key pb.StatsInfoKey) {
 	}
 
 	if approxObjectNum == 0 {
+		logutil.Warnf("approx object num is 0, db %d, tb %d", key.DatabaseID, key.TableID)
 		// There are no objects flushed yet.
 		return
 	}
