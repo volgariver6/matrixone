@@ -116,7 +116,7 @@ func (buf *ExplainDataBuffer) PushPlanTitle(title string) {
 	}
 	buf.CurrentLine++
 	buf.Lines = append(buf.Lines, title)
-	logutil.Infof(buf.Lines[buf.CurrentLine])
+	logutil.Debugf(buf.Lines[buf.CurrentLine])
 	buf.End++
 }
 
