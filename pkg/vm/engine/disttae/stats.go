@@ -633,34 +633,17 @@ func updateInfoFromZoneMap(
 		return err
 	}
 
-	type metaWrapper struct {
-		meta     objectio.ObjectMeta
-		blkCount uint32
-		index    int
-	}
-
-	var metas []metaWrapper
 	var updateMu sync.Mutex
-	onObjFn := func(objIndex int, obj logtailreplay.ObjectEntry) error {
+	onObjFn := func(obj logtailreplay.ObjectEntry) error {
 		location := obj.Location()
 		if objMeta, err = objectio.FastLoadObjectMeta(ctx, &location, false, fs); err != nil {
 			return err
 		}
 		updateMu.Lock()
 		defer updateMu.Unlock()
-		metas = append(metas, metaWrapper{
-			meta:     objMeta,
-			blkCount: obj.BlkCnt(),
-			index:    objIndex,
-		})
-		return nil
-	}
-
-	mergeFn := func(objMetaW metaWrapper) {
-		objMeta = objMetaW.meta
 		meta = objMeta.MustDataMeta()
 		info.AccurateObjectNumber++
-		info.BlockNumber += int64(objMetaW.blkCount)
+		info.BlockNumber += int64(obj.BlkCnt())
 		info.TableCnt += float64(meta.BlockHeader().Rows())
 		if !init {
 			init = true
@@ -713,6 +696,7 @@ func updateInfoFromZoneMap(
 				}
 			}
 		}
+		return nil
 	}
 	if err = ForeachVisibleDataObject(
 		req.partitionState,
@@ -721,9 +705,6 @@ func updateInfoFromZoneMap(
 		executor,
 	); err != nil {
 		return err
-	}
-	for _, m := range metas {
-		mergeFn(m)
 	}
 
 	return nil
