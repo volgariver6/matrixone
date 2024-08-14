@@ -628,11 +628,17 @@ func (s *stateMachine) handleInitialClusterRequestCmd(cmd []byte) sm.Result {
 		return result
 	}
 	req := parseInitialClusterRequestCmd(cmd)
-	if req.NumOfLogShards != req.NumOfTNShards {
-		panic("DN:Log 1:1 mode is the only supported mode")
+
+	// The number of TN shard should only be 1.
+	// There is one corresponding Log shard with that TN shard.
+	// If there is more than one Log shard, to be exact, two Log shards,
+	// the second one is used to save data related with S3. The data in
+	// the second shard comes from the first one, but only related with S3.
+	if req.NumOfTNShards != 1 {
+		panic("only support 1 dn shards")
 	}
 
-	tnShards := make([]metadata.TNShardRecord, 0)
+	tnShards := make([]metadata.TNShardRecord, 0, 1)
 	logShards := make([]metadata.LogShardRecord, 0)
 	// HAKeeper shard is assigned ShardID 0
 	rec := metadata.LogShardRecord{
@@ -642,6 +648,7 @@ func (s *stateMachine) handleInitialClusterRequestCmd(cmd []byte) sm.Result {
 	logShards = append(logShards, rec)
 
 	s.state.NextID++
+	tnShardAppended := false
 	for i := uint64(0); i < req.NumOfLogShards; i++ {
 		rec := metadata.LogShardRecord{
 			ShardID:          s.state.NextID,
@@ -650,12 +657,17 @@ func (s *stateMachine) handleInitialClusterRequestCmd(cmd []byte) sm.Result {
 		s.state.NextID++
 		logShards = append(logShards, rec)
 
+		if tnShardAppended {
+			continue
+		}
+
 		drec := metadata.TNShardRecord{
 			ShardID:    s.state.NextID,
 			LogShardID: rec.ShardID,
 		}
 		s.state.NextID++
 		tnShards = append(tnShards, drec)
+		tnShardAppended = true
 	}
 	s.state.ClusterInfo = pb.ClusterInfo{
 		TNShards:  tnShards,

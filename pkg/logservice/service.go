@@ -87,6 +87,9 @@ type Service struct {
 	}
 
 	config *util.ConfigData
+
+	// data
+	dataSync *syncShard
 }
 
 func NewService(
@@ -116,6 +119,18 @@ func NewService(
 	}
 
 	tnservice.InitCheckState(cfg.UUID)
+
+	dataSync, err := newSyncShard(
+		service.stopper,
+		service.runtime.Logger(),
+		cfg.UUID,
+		cfg.HAKeeperClientConfig,
+	)
+	if err != nil {
+		service.runtime.Logger().Error("failed to create log store", zap.Error(err))
+		return nil, err
+	}
+	service.dataSync = dataSync
 
 	store, err := newLogStore(cfg, service.getTaskService, service.runtime)
 	if err != nil {
@@ -214,6 +229,9 @@ func (s *Service) Close() (err error) {
 	s.task.RUnlock()
 	if ts != nil {
 		err = firstError(err, ts.Close())
+	}
+	if s.dataSync != nil {
+		err = firstError(err, s.dataSync.close())
 	}
 	return err
 }
@@ -378,6 +396,8 @@ func (s *Service) handleAppend(ctx context.Context, req pb.Request, payload []by
 		resp.ErrorCode, resp.ErrorMessage = toErrorCode(err)
 	} else {
 		resp.LogResponse.Lsn = lsn
+		//
+		s.dataSync.enqueue(payload)
 	}
 	return resp
 }

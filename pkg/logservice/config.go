@@ -209,6 +209,9 @@ type Config struct {
 		} `toml:"restore"`
 		// NonVotingLocality is the locality for non-voting replicas.
 		NonVotingLocality string `toml:"non-voting-locality" user_setting:"advanced"`
+		// StandbyEnabled is true means that the standby cluster is enabled and there will
+		// be another new shard for the s3 data.
+		StandbyEnabled bool `toml:"standby-enabled" user_setting:"advanced"`
 	}
 
 	HAKeeperConfig struct {
@@ -442,6 +445,7 @@ func DefaultConfig() Config {
 				Force    bool   `toml:"force"`
 			} `toml:"restore"`
 			NonVotingLocality string `toml:"non-voting-locality" user_setting:"advanced"`
+			StandbyEnabled    bool   `toml:"standby-enabled" user_setting:"advanced"`
 		}(struct {
 			BootstrapCluster      bool
 			NumOfLogShards        uint64
@@ -453,6 +457,7 @@ func DefaultConfig() Config {
 				Force    bool
 			}
 			NonVotingLocality string
+			StandbyEnabled    bool
 		}{
 			BootstrapCluster:      true,
 			NumOfLogShards:        1,
@@ -467,6 +472,7 @@ func DefaultConfig() Config {
 				Force:    false,
 			},
 			NonVotingLocality: "",
+			StandbyEnabled:    false,
 		}),
 		HAKeeperConfig: struct {
 			TickPerSecond   int           `toml:"tick-per-second"`
@@ -582,9 +588,6 @@ type ClientConfig struct {
 func (c *ClientConfig) Validate() error {
 	if c.LogShardID == 0 {
 		return moerr.NewBadConfigNoCtx("LogShardID value cannot be 0")
-	}
-	if c.TNReplicaID == 0 {
-		return moerr.NewBadConfigNoCtx("DNReplicaID value cannot be 0")
 	}
 	if len(c.DiscoveryAddress) == 0 && len(c.ServiceAddresses) == 0 {
 		c.ServiceAddresses = []string{DefaultLogServiceServiceAddress}
