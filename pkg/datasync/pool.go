@@ -12,9 +12,44 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logservice
+package datasync
 
-type DataSync interface {
-	Append([]byte)
-	Close() error
+import "sync"
+
+type dataPool interface {
+	acquire(int) any
+	release(any)
+}
+
+type bytesPool struct {
+	pool sync.Pool
+}
+
+func newDataPool(size int) dataPool {
+	return &bytesPool{
+		pool: sync.Pool{
+			New: func() any {
+				return make([]byte, size)
+			},
+		},
+	}
+}
+
+func (p *bytesPool) acquire(size int) any {
+	d := p.pool.Get().([]byte)
+	if cap(d) < size {
+		p.pool.Put(d)
+		d = make([]byte, size)
+	} else {
+		d = d[:size]
+	}
+	return d
+}
+
+func (p *bytesPool) release(data any) {
+	v := data.([]byte)
+	if cap(v) > defaultDataSize {
+		return
+	}
+	p.pool.Put(v)
 }

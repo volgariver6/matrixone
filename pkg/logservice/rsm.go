@@ -17,7 +17,6 @@ package logservice
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"io"
 
 	sm "github.com/lni/dragonboat/v4/statemachine"
@@ -132,9 +131,6 @@ func (s *stateMachine) getLeaseHistory(lsn uint64) (uint64, uint64) {
 
 func (s *stateMachine) handleSetLeaseHolderID(cmd []byte) sm.Result {
 	s.state.LeaseHolderID = parseLeaseHolderID(cmd)
-	if s.shardID == 3 {
-		logutil.Infof("liubo: lease hold id %d", s.state.LeaseHolderID)
-	}
 	s.state.LeaseHistory[s.state.Index] = s.state.LeaseHolderID
 	return sm.Result{}
 }
@@ -153,9 +149,6 @@ func (s *stateMachine) handleTruncateLsn(cmd []byte) sm.Result {
 // sm.Result value with the Value field set to the current leaseholder ID
 // to indicate rejection by mismatched leaseholder ID.
 func (s *stateMachine) handleUserUpdate(cmd []byte) sm.Result {
-	if s.shardID == 3 {
-		logutil.Infof("liubo: user %d, %d", s.state.LeaseHolderID, parseLeaseHolderID(cmd))
-	}
 	if s.state.LeaseHolderID != parseLeaseHolderID(cmd) {
 		data := make([]byte, 8)
 		binaryEnc.PutUint64(data, s.state.LeaseHolderID)

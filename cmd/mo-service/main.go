@@ -36,6 +36,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/runtime"
 	"github.com/matrixorigin/matrixone/pkg/common/stopper"
 	"github.com/matrixorigin/matrixone/pkg/common/system"
+	"github.com/matrixorigin/matrixone/pkg/datasync"
 	"github.com/matrixorigin/matrixone/pkg/defines"
 	"github.com/matrixorigin/matrixone/pkg/fileservice"
 	"github.com/matrixorigin/matrixone/pkg/frontend"
@@ -332,10 +333,23 @@ func startLogService(
 ) error {
 	lscfg := cfg.getLogServiceConfig()
 	commonConfigKVMap, _ := dumpCommonConfig(*cfg)
+	rt := runtime.ServiceRuntime(lscfg.UUID)
+	// TODO(liubo:) config to control it if it enabled.
+	ds, err := datasync.NewDataSync(
+		stopper,
+		rt.Logger(),
+		lscfg.UUID,
+		lscfg.HAKeeperClientConfig,
+	)
+	if err != nil {
+		panic(err)
+	}
 	s, err := logservice.NewService(lscfg, fileService,
 		shutdownC,
-		logservice.WithRuntime(runtime.ServiceRuntime(lscfg.UUID)),
-		logservice.WithConfigData(commonConfigKVMap))
+		logservice.WithRuntime(rt),
+		logservice.WithConfigData(commonConfigKVMap),
+		logservice.WithDataSync(ds),
+	)
 	if err != nil {
 		panic(err)
 	}

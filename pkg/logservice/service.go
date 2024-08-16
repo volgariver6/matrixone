@@ -88,8 +88,8 @@ type Service struct {
 
 	config *util.ConfigData
 
-	// data
-	dataSync *syncShard
+	// dataSync is used to sync data to other modules.
+	dataSync DataSync
 }
 
 func NewService(
@@ -119,18 +119,6 @@ func NewService(
 	}
 
 	tnservice.InitCheckState(cfg.UUID)
-
-	dataSync, err := newSyncShard(
-		service.stopper,
-		service.runtime.Logger(),
-		cfg.UUID,
-		cfg.HAKeeperClientConfig,
-	)
-	if err != nil {
-		service.runtime.Logger().Error("failed to create log store", zap.Error(err))
-		return nil, err
-	}
-	service.dataSync = dataSync
 
 	store, err := newLogStore(cfg, service.getTaskService, service.runtime)
 	if err != nil {
@@ -231,7 +219,7 @@ func (s *Service) Close() (err error) {
 		err = firstError(err, ts.Close())
 	}
 	if s.dataSync != nil {
-		err = firstError(err, s.dataSync.close())
+		err = firstError(err, s.dataSync.Close())
 	}
 	return err
 }
@@ -397,8 +385,8 @@ func (s *Service) handleAppend(ctx context.Context, req pb.Request, payload []by
 	} else {
 		resp.LogResponse.Lsn = lsn
 		// send the data only from the TN
-		if req.LogRequest.TNID > 0 {
-			s.dataSync.enqueue(payload)
+		if s.dataSync != nil && req.LogRequest.TNID > 0 {
+			s.dataSync.Append(payload)
 		}
 	}
 	return resp
