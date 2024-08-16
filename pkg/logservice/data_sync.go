@@ -16,6 +16,7 @@ package logservice
 
 import (
 	"context"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"time"
 
 	"github.com/matrixorigin/matrixone/pkg/common/log"
@@ -161,15 +162,29 @@ func (s *syncShard) start(ctx context.Context) {
 	}
 }
 
+// adjustLeaseHolderID updates the leaseholder ID of the data.
+// The original leaseholder ID is replica ID of TN, set it to 0.
+func adjustLeaseholderID(old []byte) {
+	binaryEnc.PutUint64(old[headerSize:], 0)
+}
+
 func (s *syncShard) appendData(data []byte) {
 	if s.HAKeeperClient == nil {
 		s.createHAKeeperClient(s.cfg)
 	}
 	if s.logClient == nil {
+		logutil.Infof("liubo: log client is nil")
 		s.createLogClient()
 	}
 	ctx, cancel := context.WithTimeout(s.ctx, time.Second*5)
 	defer cancel()
+	adjustLeaseholderID(data)
+	s.log.Info("liubo: append data",
+		zap.Uint32("type", binaryEnc.Uint32(data)),
+		zap.Uint64("lease", binaryEnc.Uint64(data[headerSize:])),
+	)
 	_, err := s.logClient.Append(ctx, pb.LogRecord{Data: data})
-	s.log.Error("liubo: append error", zap.Error(err))
+	if err != nil {
+		s.log.Error("liubo: append error", zap.Error(err))
+	}
 }

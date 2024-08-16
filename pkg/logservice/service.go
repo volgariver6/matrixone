@@ -396,8 +396,10 @@ func (s *Service) handleAppend(ctx context.Context, req pb.Request, payload []by
 		resp.ErrorCode, resp.ErrorMessage = toErrorCode(err)
 	} else {
 		resp.LogResponse.Lsn = lsn
-		//
-		s.dataSync.enqueue(payload)
+		// send the data only from the TN
+		if req.LogRequest.TNID > 0 {
+			s.dataSync.enqueue(payload)
+		}
 	}
 	return resp
 }
