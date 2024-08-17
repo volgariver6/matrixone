@@ -16,40 +16,61 @@ package datasync
 
 import "sync"
 
+type wrappedData struct {
+	data []byte
+	lsn  uint64
+}
+
 type dataPool interface {
-	acquire(int) any
-	release(any)
+	// acquire acquires data from the pool. The parameter is the data size.
+	acquire(int) *wrappedData
+	// release releases the data back to the pool.
+	release(*wrappedData)
 }
 
 type bytesPool struct {
 	pool sync.Pool
 }
 
+// newDataPool creates a new data pool. The parameter indicates the
+// size of the data in the pool.
 func newDataPool(size int) dataPool {
 	return &bytesPool{
 		pool: sync.Pool{
 			New: func() any {
-				return make([]byte, size)
+				return &wrappedData{
+					data: make([]byte, size),
+				}
 			},
 		},
 	}
 }
 
-func (p *bytesPool) acquire(size int) any {
-	d := p.pool.Get().([]byte)
-	if cap(d) < size {
-		p.pool.Put(d)
-		d = make([]byte, size)
+// acquire implements the dataPool interface.
+// If the size is larger than the size of data in the pool,
+// creates new data instead of fetch from the pool.
+func (p *bytesPool) acquire(size int) *wrappedData {
+	w := p.pool.Get().(*wrappedData)
+	if cap(w.data) < size {
+		p.pool.Put(w)
+		w = &wrappedData{
+			data: make([]byte, size),
+		}
 	} else {
-		d = d[:size]
+		w.data = w.data[:size]
 	}
-	return d
+	return w
 }
 
-func (p *bytesPool) release(data any) {
-	v := data.([]byte)
-	if cap(v) > defaultDataSize {
+// release implements the dataPool interface.
+// If the size of the data is larger than the default value,
+// do not put it back to the pool.
+func (p *bytesPool) release(w *wrappedData) {
+	if w == nil {
 		return
 	}
-	p.pool.Put(v)
+	if cap(w.data) > defaultDataSize {
+		return
+	}
+	p.pool.Put(w)
 }

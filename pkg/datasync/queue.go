@@ -20,35 +20,32 @@ import (
 )
 
 type queue interface {
-	enqueue(any)
-	dequeue(ctx context.Context) (any, func(), error)
+	enqueue(*wrappedData)
+	dequeue(ctx context.Context) (*wrappedData, error)
 	close()
 }
 
 type dataQueue struct {
-	queue chan []byte
-	pool  dataPool
+	queue chan *wrappedData
 }
 
-func newDataQueue(dataSize int, queueSize int) *dataQueue {
+func newDataQueue(queueSize int) queue {
 	return &dataQueue{
-		queue: make(chan []byte, queueSize),
-		pool:  newDataPool(dataSize),
+		queue: make(chan *wrappedData, queueSize),
 	}
 }
 
-func (q *dataQueue) enqueue(data any) {
-	orig := data.([]byte)
-	v := q.pool.acquire(len(orig)).([]byte)
-	copy(v, orig)
-
+func (q *dataQueue) enqueue(w *wrappedData) {
+	if w == nil {
+		return
+	}
 	for {
 		select {
-		case q.queue <- v:
+		case q.queue <- w:
 			return
 
 		default:
-			if !s3Related(v) {
+			if !s3Related(w) {
 				// if the queue is full and the data is not s3 related, ignore it.
 				return
 			}
@@ -57,13 +54,13 @@ func (q *dataQueue) enqueue(data any) {
 	}
 }
 
-func (q *dataQueue) dequeue(ctx context.Context) (any, func(), error) {
+func (q *dataQueue) dequeue(ctx context.Context) (*wrappedData, error) {
 	select {
 	case <-ctx.Done():
-		return nil, nil, ctx.Err()
+		return nil, ctx.Err()
 
 	case v := <-q.queue:
-		return v, func() { q.pool.release(v) }, nil
+		return v, nil
 	}
 
 }
