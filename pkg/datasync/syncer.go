@@ -24,7 +24,6 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/log"
 	"github.com/matrixorigin/matrixone/pkg/common/stopper"
 	"github.com/matrixorigin/matrixone/pkg/logservice"
-	pb "github.com/matrixorigin/matrixone/pkg/pb/logservice"
 	"go.uber.org/zap"
 )
 
@@ -38,31 +37,16 @@ var (
 )
 
 type syncer struct {
-	ctx     context.Context
-	log     *log.MOLogger
-	stopper *stopper.Stopper
-	uuid    string
+	common
+	ctx        context.Context
+	appender   Appender
+	truncation Worker
+	reader     *reader
+	dataSync   Worker
 
-	cfg logservice.HAKeeperClientConfig
-	// haKeeperClient is used to get log shard ID from HAKeeper
-	haKeeperClient logservice.LogHAKeeperClient
-
-	// logClient is used to append data to log shard.
-	appendClient logservice.Client
-
-	// truncateClient is used to update truncate LSN of the log shard.
-	truncateClient logservice.Client
-
-	truncation *truncation
-
-	pool dataPool
-
-	// allDataQueue contains all the data comes from TN shard.
-	allDataQueue queue
-
-	// syncDataQueue only contains the data that need to sync to
+	// syncDataQ only contains the data that need to sync to
 	// the other s3 storage.
-	syncDataQueue queue
+	syncDataQ queue
 
 	syncedLSN atomic.Uint64
 }
@@ -71,26 +55,27 @@ type syncer struct {
 func NewDataSync(
 	stopper *stopper.Stopper,
 	log *log.MOLogger,
-	uuid string,
+	sid string,
 	cfg logservice.HAKeeperClientConfig,
 ) (logservice.DataSync, error) {
 	ss := &syncer{
-		ctx:           context.Background(),
-		stopper:       stopper,
-		log:           log,
-		uuid:          uuid,
-		cfg:           cfg,
-		pool:          newDataPool(defaultDataSize),
-		allDataQueue:  newDataQueue(10240),
-		syncDataQueue: newDataQueue(1024),
+		ctx: context.Background(),
+		common: common{
+			stopper:        stopper,
+			log:            log.With(zap.String("module", "datasync")),
+			sid:            sid,
+			haKeeperConfig: cfg,
+			pool:           newDataPool(defaultDataSize),
+		},
+		syncDataQ: newDataQueue(1024),
 	}
+	ss.appender = newAppender(ss.syncDataQ, withAppenderHAKeeperClientConfig(cfg))
+	ss.dataSync = newDataSync(ss.syncDataQ, &ss.syncedLSN)
 	ss.truncation = newTruncation(
-		uuid,
-		stopper,
-		log,
+		ss.common,
 		&ss.syncedLSN,
 		withTruncateInterval(truncateInterval),
-		withHAKeeperClientConfig(cfg),
+		withTruncationHAKeeperClientConfig(cfg),
 	)
 	if err := ss.stopper.RunNamedTask("data-syncer", ss.start); err != nil {
 		return nil, err
@@ -101,117 +86,50 @@ func NewDataSync(
 // TODO(liubo): what to do when the chan is full?
 func (s *syncer) Append(data []byte) {
 	// Acquire data intance from pool.
-	d := s.pool.acquire(len(data))
-	if len(d.data) != len(data) {
+	w := s.pool.acquire(len(data))
+	if len(w.data) != len(data) {
 		panic(fmt.Sprintf("mismatch data length: %d and %d",
-			len(d.data), len(data)))
+			len(w.data), len(data)))
 	}
 
 	// copy the data.
-	b := copy(d.data, data)
+	b := copy(w.data, data)
 	if b != len(data) {
 		panic(fmt.Sprintf("mismatch data length: %d and %d",
 			b, len(data)))
 	}
 
 	// send data to the queue.
-	s.allDataQueue.enqueue(d)
+	s.appender.Enqueue(w)
 }
 
 func (s *syncer) Close() error {
-	if s.haKeeperClient != nil {
-		if err := s.haKeeperClient.Close(); err != nil {
-			s.log.Error("failed to close HAKeeper client", zap.Error(err))
-		}
-	}
-	// close the queues.
-	s.allDataQueue.close()
-	s.syncDataQueue.close()
+	s.reader.close()
+	s.appender.Close()
+	s.truncation.Close()
+	s.dataSync.Close()
+	s.syncDataQ.close()
 	return nil
 }
 
-func (s *syncer) startFilterData(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		default:
-			w, err := s.allDataQueue.dequeue(ctx)
-			if err != nil {
-				s.log.Error("failed to dequeue data", zap.Error(err))
-				return
-			}
-			if s3Related(w) {
-				s.syncDataQueue.enqueue(w)
-			} else {
-				s.pool.release(w)
-			}
-		}
-	}
-}
-
-func (s *syncer) startSyncData(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		default:
-			w, err := s.syncDataQueue.dequeue(ctx)
-			if err != nil {
-				s.log.Error("failed to dequeue data", zap.Error(err))
-				return
-			}
-
-			// 1. save to WAL
-			lsn := s.saveWAL(w.data)
-			w.lsn = lsn
-
-			// 2. sync data
-			s.syncData(w)
-
-			// 3. release data
-			s.pool.release(w)
-		}
-	}
-}
-
+// start starts the goroutines in the syncer module:
 func (s *syncer) start(ctx context.Context) {
-	go s.startFilterData(ctx)
+	// start truncation worker.
+	go s.truncation.Start(ctx)
 
-	go s.startSyncData(ctx)
-}
+	// start the sync data worker, which fetch items in the sync-data-queue
+	// and do the sync job.
+	go s.dataSync.Start(ctx)
 
-// adjustLeaseHolderID updates the leaseholder ID of the data.
-// The original leaseholder ID is replica ID of TN, set it to 0.
-func adjustLeaseholderID(old []byte) {
-	// headerSize is 4.
-	binaryEnc.PutUint64(old[4:], 0)
-}
+	// read truncated lsn from RSM.
+	var lsn uint64
+	s.log.Info("syncer start, read lsn", zap.Uint64("LSN", lsn))
 
-func (s *syncer) prepareAppend(ctx context.Context) {
-	if s.haKeeperClient == nil {
-		createHAKeeperClient(ctx, s.uuid, s.cfg)
-	}
-	if s.appendClient == nil {
-		s.appendClient = createLogServiceClient(
-			ctx,
-			s.uuid,
-			s.haKeeperClient,
-			s.cfg,
-		)
-	}
-}
+	// read entries the log storage and put them into sync-data-queue.
 
-func (s *syncer) saveWAL(data []byte) uint64 {
-	s.prepareAppend(s.ctx)
-	ctx, cancel := context.WithTimeout(s.ctx, time.Second*5)
-	defer cancel()
-	adjustLeaseholderID(data)
-	lsn, err := s.appendClient.Append(ctx, pb.LogRecord{Data: data})
-	if err != nil {
-		s.log.Error("liubo: append error", zap.Error(err))
-	}
-	return lsn
+	// the filter worker should start after replay entries in the WAL.
+	go s.appender.Start(ctx)
+
+	// wait the end of the whole the process.
+	<-ctx.Done()
 }

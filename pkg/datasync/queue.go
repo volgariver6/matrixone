@@ -39,6 +39,7 @@ func (q *dataQueue) enqueue(w *wrappedData) {
 	if w == nil {
 		return
 	}
+	// TODO(liubo:) if the channel is full for long time, fix it.
 	for {
 		select {
 		case q.queue <- w:
