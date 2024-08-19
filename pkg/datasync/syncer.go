@@ -41,8 +41,8 @@ type syncer struct {
 	ctx        context.Context
 	appender   Appender
 	truncation Worker
-	reader     *reader
-	dataSync   Worker
+	replay     Worker
+	syncData   Worker
 
 	// syncDataQ only contains the data that need to sync to
 	// the other s3 storage.
@@ -69,8 +69,9 @@ func NewDataSync(
 		},
 		syncDataQ: newDataQueue(1024),
 	}
+	ss.replay = newReplay()
 	ss.appender = newAppender(ss.syncDataQ, withAppenderHAKeeperClientConfig(cfg))
-	ss.dataSync = newDataSync(ss.syncDataQ, &ss.syncedLSN)
+	ss.syncData = newDataSync(ss.syncDataQ, &ss.syncedLSN)
 	ss.truncation = newTruncation(
 		ss.common,
 		&ss.syncedLSN,
@@ -104,31 +105,38 @@ func (s *syncer) Append(data []byte) {
 }
 
 func (s *syncer) Close() error {
-	s.reader.close()
+	s.replay.Close()
 	s.appender.Close()
 	s.truncation.Close()
-	s.dataSync.Close()
+	s.syncData.Close()
 	s.syncDataQ.close()
 	return nil
 }
 
 // start starts the goroutines in the syncer module:
 func (s *syncer) start(ctx context.Context) {
+	var e error
+
 	// start truncation worker.
-	go s.truncation.Start(ctx)
+	if err := s.stopper.RunNamedTask("datasync-truncation", s.truncation.Start); err != nil {
+		s.log.Error("failed to start truncation worker", zap.Error(err))
+		e = err
+	}
 
-	// start the sync data worker, which fetch items in the sync-data-queue
-	// and do the sync job.
-	go s.dataSync.Start(ctx)
+	// start sync_data worker.
+	if err := s.stopper.RunNamedTask("datasync-sync_data", s.syncData.Start); err != nil {
+		s.log.Error("failed to start sync_data worker", zap.Error(err))
+		e = err
+	}
 
-	// read truncated lsn from RSM.
-	var lsn uint64
-	s.log.Info("syncer start, read lsn", zap.Uint64("LSN", lsn))
-
-	// read entries the log storage and put them into sync-data-queue.
+	s.replay.Start(ctx)
 
 	// the filter worker should start after replay entries in the WAL.
 	go s.appender.Start(ctx)
+
+	if e != nil {
+		panic(fmt.Sprintf("failed to start datasync module, %v", e))
+	}
 
 	// wait the end of the whole the process.
 	<-ctx.Done()

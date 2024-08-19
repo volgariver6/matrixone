@@ -29,7 +29,7 @@ type appenderConfig struct {
 
 type appender struct {
 	common
-	// cfg is truncation module configuration.
+	// cfg is appender module configuration.
 	cfg appenderConfig
 	// the client to HAKeeper server.
 	haKeeperClient logservice.LogHAKeeperClient

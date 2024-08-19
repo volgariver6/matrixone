@@ -7,20 +7,20 @@ import (
 	"go.uber.org/zap"
 )
 
-type dataSync struct {
+type syncData struct {
 	common
 	syncDataQueue queue
 	syncedLSN     *atomic.Uint64
 }
 
-func newDataSync(q queue, lsn *atomic.Uint64) *dataSync {
-	return &dataSync{
+func newDataSync(q queue, lsn *atomic.Uint64) Worker {
+	return &syncData{
 		syncDataQueue: q,
 		syncedLSN:     lsn,
 	}
 }
 
-func (ds *dataSync) syncData(w *wrappedData) {
+func (ds *syncData) syncData(w *wrappedData) {
 	// do the sync things...
 
 	// update the LSN
@@ -29,7 +29,7 @@ func (ds *dataSync) syncData(w *wrappedData) {
 	}
 }
 
-func (ds *dataSync) Start(ctx context.Context) {
+func (ds *syncData) Start(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -48,4 +48,4 @@ func (ds *dataSync) Start(ctx context.Context) {
 	}
 }
 
-func (ds *dataSync) Close() {}
+func (ds *syncData) Close() {}
