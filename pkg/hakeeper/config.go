@@ -20,7 +20,7 @@ import (
 
 const (
 	DefaultTickPerSecond     = 10
-	DefaultLogStoreTimeout   = 5 * time.Minute
+	DefaultLogStoreTimeout   = 3 * time.Minute
 	DefaultTNStoreTimeout    = 10 * time.Second
 	DefaultCNStoreTimeout    = 30 * time.Second
 	DefaultProxyStoreTimeout = 30 * time.Second

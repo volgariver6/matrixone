@@ -17,6 +17,7 @@ package logservice
 import (
 	"context"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"reflect"
 	"time"
 
@@ -35,14 +36,24 @@ func (s *Service) handleCommands(cmds []pb.ScheduleCommand) {
 			s.runtime.Logger().Debug("applying schedule command:", zap.String("command", cmd.LogString()))
 			switch cmd.ConfigChange.ChangeType {
 			case pb.AddReplica:
+				logutil.Infof("liubo: add replica %d:%d",
+					cmd.ConfigChange.Replica.ShardID, cmd.ConfigChange.Replica.ReplicaID)
 				s.handleAddReplica(cmd)
 			case pb.RemoveReplica:
+				logutil.Infof("liubo: remove replica %d:%d",
+					cmd.ConfigChange.Replica.ShardID, cmd.ConfigChange.Replica.ReplicaID)
 				s.handleRemoveReplica(cmd)
 			case pb.StartReplica:
+				logutil.Infof("liubo: start replica %d:%d",
+					cmd.ConfigChange.Replica.ShardID, cmd.ConfigChange.Replica.ReplicaID)
 				s.handleStartReplica(cmd)
 			case pb.StopReplica:
+				logutil.Infof("liubo: stop replica %d:%d",
+					cmd.ConfigChange.Replica.ShardID, cmd.ConfigChange.Replica.ReplicaID)
 				s.handleStopReplica(cmd)
 			case pb.KillZombie:
+				logutil.Infof("liubo: kill replica %d:%d",
+					cmd.ConfigChange.Replica.ShardID, cmd.ConfigChange.Replica.ReplicaID)
 				s.handleKillZombie(cmd)
 			default:
 				panic("unknown config change cmd type")
