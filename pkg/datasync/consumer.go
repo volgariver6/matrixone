@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"runtime"
 	"strconv"
 	"strings"
@@ -99,6 +100,8 @@ type consumer struct {
 	lastRequiredLsn uint64
 	// jobScheduler is the job scheduler to schedule and execute copy job.
 	jobScheduler tasks.JobScheduler
+
+	loader *checkpointLoader
 }
 
 func newConsumer(
@@ -140,6 +143,10 @@ func newConsumer(
 
 	// start the job scheduler.
 	c.jobScheduler = tasks.NewParallelJobScheduler(runtime.GOMAXPROCS(0) * 4)
+	c.loader, err = newCheckpointLoader(context.Background(), dstFS)
+	if err != nil {
+		return nil
+	}
 
 	return c
 }
@@ -493,7 +500,36 @@ func (c *consumer) consume(ctx context.Context, rec logservice.LogRecord, upstre
 	if !upstream && rec.Lsn > c.syncedLsn.Load() {
 		c.syncedLsn.Store(rec.Lsn)
 	}
+
+	for _, loc := range locations {
+		if strings.Contains(loc, "ckp") {
+			c.check()
+		}
+	}
 	return nil
+}
+
+func (c *consumer) check() {
+	entries, err := c.loader.Load()
+	if err != nil {
+		return
+	}
+
+	locMap := make(map[string]struct{})
+	for _, entry := range entries {
+		cnLoc := entry.GetLocation()
+		locMap[cnLoc.Name().String()] = struct{}{}
+		tnLoc := entry.GetTNLocation()
+		locMap[tnLoc.Name().String()] = struct{}{}
+	}
+	for filename := range locMap {
+		_, err := c.dstFS.StatFile(context.Background(), filename)
+		if err != nil {
+			panic(fmt.Sprintf("liubo: failed to stat file %s: %v", filename, err))
+		} else {
+			logutil.Infof("liubo: ok to stat file %s", filename)
+		}
+	}
 }
 
 // parseCheckpointLocations parses the checkpoint str and returns the object files
