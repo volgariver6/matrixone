@@ -502,7 +502,9 @@ func (rt *Routine) migrateConnectionFrom(resp *query.MigrateConnFromResponse) er
 	return nil
 }
 
-func (rt *Routine) resetSession(baseServiceID string, resp *query.ResetSessionResponse) error {
+func (rt *Routine) resetSession(
+	ctx context.Context, baseServiceID string, resp *query.ResetSessionResponse,
+) error {
 	// retrieve the old session.
 	oldSession := rt.getSession()
 
@@ -516,9 +518,17 @@ func (rt *Routine) resetSession(baseServiceID string, resp *query.ResetSessionRe
 	newSession := NewSession(cancelCtx, baseServiceID, rt.getProtocol(), nil)
 
 	// reset the old and new session.
-	if err := newSession.reset(oldSession); err != nil {
+	if err := newSession.reset(ctx, oldSession); err != nil {
 		return err
 	}
+	oldSession.Infof(ctx,
+		"liubo: reset session, conn id: %d, new session %p, old session %p, addr: %s, %s",
+		rt.getConnectionID(),
+		newSession,
+		oldSession,
+		newSession.proxyAddr,
+		oldSession.proxyAddr,
+	)
 
 	// some cleanups in the routine.
 	rt.killQuery(false, "")

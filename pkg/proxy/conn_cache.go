@@ -17,6 +17,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"sync"
 	"time"
 
@@ -355,6 +356,8 @@ func (c *connCache) Push(key cacheKey, sc ServerConn) bool {
 		scWithAuth,
 		func() { c.mu.allConns[sc] = struct{}{} },
 	)
+	logutil.Infof("liubo: push conn id: %d, local: %s, remote: %s",
+		sc.ConnID(), sc.RawConn().LocalAddr(), sc.RawConn().RemoteAddr())
 	return true
 }
 
@@ -418,6 +421,8 @@ func (c *connCache) Pop(key cacheKey, connID uint32, salt []byte, authResp []byt
 			// The peeked connection is ok to use, pop it from the store.
 			connOperator[c.opStrategy].pop(c.mu.cache[key], postPop)
 
+			logutil.Infof("liubo: pop new conn id: %d, local: %s, remote: %s",
+				connID, sc.RawConn().LocalAddr(), sc.RawConn().RemoteAddr())
 			return sc.ServerConn
 		} else {
 			if err := sc.Quit(); err != nil {

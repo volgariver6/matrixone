@@ -1667,7 +1667,7 @@ func (ses *Session) SetSessionRoutineStatus(status string) error {
 
 // reset resets the ses instance and copy some fields of prev, then
 // close the prev.
-func (ses *Session) reset(prev *Session) error {
+func (ses *Session) reset(ctx context.Context, prev *Session) error {
 	if ses == nil || prev == nil {
 		return nil
 	}
@@ -1696,6 +1696,13 @@ func (ses *Session) reset(prev *Session) error {
 	ses.clientAddr = prev.clientAddr
 	ses.proxyAddr = prev.proxyAddr
 
+	bh := ses.GetBackgroundExec(ctx)
+	defer bh.Close()
+	if err := ses.InitSystemVariables(ctx, bh); err != nil {
+		prev.Error(ctx, "failed to init system variables", zap.Error(err))
+		return err
+	}
+
 	// rollback the transactions in the old session.
 	tempExecCtx := ExecCtx{
 		ses:    prev,
@@ -1703,8 +1710,7 @@ func (ses *Session) reset(prev *Session) error {
 	}
 	err := prev.GetTxnHandler().Rollback(&tempExecCtx)
 	if err != nil {
-		prev.Error(tempExecCtx.reqCtx, "failed to rollback txn",
-			zap.Error(err))
+		prev.Error(ctx, "failed to rollback txn", zap.Error(err))
 		return err
 	}
 	// close the previous session.

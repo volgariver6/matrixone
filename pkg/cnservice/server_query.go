@@ -513,7 +513,7 @@ func (s *service) handleResetSession(
 	}
 	rm := s.mo.GetRoutineManager()
 	resp.ResetSessionResponse = &query.ResetSessionResponse{}
-	if err := rm.ResetSession(req.ResetSessionRequest, resp.ResetSessionResponse); err != nil {
+	if err := rm.ResetSession(ctx, req.ResetSessionRequest, resp.ResetSessionResponse); err != nil {
 		logutil.Errorf("failed to reset session: %v", err)
 		return err
 	}
