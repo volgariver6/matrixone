@@ -129,13 +129,14 @@ func runTestWithNewConnCache(
 	fn func(cc ConnCache),
 ) {
 	ctx := context.Background()
-	rt := runtime.ServiceRuntime("")
+	rt := runtime.ServiceRuntime("s1")
 	if rt == nil {
 		rt = runtime.DefaultRuntime()
+		runtime.SetupServiceBasedRuntime("s1", rt)
 	}
 	logger := rt.Logger()
 
-	cc := newConnCache(ctx, "", logger,
+	cc := newConnCache(ctx, "s1", logger,
 		withQueryClient(qt),
 		withResetSessionFunc(func(conn ServerConn) ([]byte, error) {
 			return nil, nil

@@ -576,29 +576,64 @@ func TestClientConn_SendErrToClient(t *testing.T) {
 }
 
 func TestConnectToBackend_ConnCache(t *testing.T) {
-	cc, cleanup := createNewClientConn(t)
-	defer cleanup()
-	c, ok := cc.(*clientConn)
-	require.True(t, ok)
-	require.NotNil(t, c)
-	c.clientInfo.hash = "k100"
-	c.sendPacketToClientFn = func(r []byte, sc ServerConn) error {
-		return nil
+	runTest := func(t *testing.T, fn func(cc ClientConn, sc ServerConn)) {
+		cc, cleanup := createNewClientConn(t)
+		defer cleanup()
+		c, ok := cc.(*clientConn)
+		require.True(t, ok)
+		require.NotNil(t, c)
+		c.clientInfo.hash = "k100"
+
+		ctx := context.Background()
+		c.connCache = newConnCache(ctx, "", c.log,
+			withResetSessionFunc(func(conn ServerConn) ([]byte, error) {
+				return nil, nil
+			}),
+			withAuthConstructor(nil),
+		)
+		c1, _ := net.Pipe()
+		mockConn1 := newMockServerConn(c1)
+		require.True(t, c.connCache.Push("k100", mockConn1))
+
+		fn(cc, mockConn1)
 	}
 
-	ctx := context.Background()
-	c.connCache = newConnCache(ctx, "", c.log,
-		withResetSessionFunc(func(conn ServerConn) ([]byte, error) {
-			return nil, nil
-		}),
-		withAuthConstructor(nil),
-	)
-	c1, _ := net.Pipe()
-	mockConn1 := newMockServerConn(c1)
-	mockConn1.SetConnResponse([]byte{1, 2, 3, 4, 5, 6})
-	require.True(t, c.connCache.Push("k100", mockConn1))
+	t.Run("ok", func(t *testing.T) {
+		runTest(t, func(cc ClientConn, sc ServerConn) {
+			c := cc.(*clientConn)
+			c.sendPacketToClientFn = func(r []byte, sc ServerConn) error {
+				return nil
+			}
+			sc.SetConnResponse([]byte{1, 2, 3, 4, 5, 6})
+			ret, err := c.connectToBackend("")
+			require.NoError(t, err)
+			require.NotNil(t, ret)
+		})
+	})
 
-	sc, err := c.connectToBackend("")
-	require.NoError(t, err)
-	require.NotNil(t, sc)
+	t.Run("resp is empty", func(t *testing.T) {
+		runTest(t, func(cc ClientConn, sc ServerConn) {
+			c := cc.(*clientConn)
+			c.sendPacketToClientFn = func(r []byte, sc ServerConn) error {
+				return nil
+			}
+			sc.SetConnResponse(nil)
+			ret, err := c.connectToBackend("")
+			require.Error(t, err)
+			require.Nil(t, ret)
+		})
+	})
+
+	t.Run("send packet error", func(t *testing.T) {
+		runTest(t, func(cc ClientConn, sc ServerConn) {
+			c := cc.(*clientConn)
+			c.sendPacketToClientFn = func(r []byte, sc ServerConn) error {
+				return context.DeadlineExceeded
+			}
+			sc.SetConnResponse([]byte{1, 2, 3, 4, 5, 6})
+			ret, err := c.connectToBackend("")
+			require.Error(t, err)
+			require.Nil(t, ret)
+		})
+	})
 }

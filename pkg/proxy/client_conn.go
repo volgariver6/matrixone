@@ -518,7 +518,8 @@ func (c *clientConn) connectToBackend(prevAdd string) (ServerConn, error) {
 
 	var sc ServerConn
 	// If connCache is enabled, try to get connection from the cache.
-	if c.connCache != nil {
+	// Don't get the cached connection if it is transferring connection.
+	if c.connCache != nil && prevAdd == "" {
 		sc = c.connCache.Pop(
 			c.clientInfo.hash,
 			c.connID,
