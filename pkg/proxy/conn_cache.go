@@ -59,7 +59,7 @@ type EntryOperation interface {
 	// pop is the operator to pop the connection entry from the store.
 	pop(store *cacheStore, postPop func()) *serverConnAuth
 	// peek is the operator to peek the connection entry in the store.
-	peek(store *cacheStore) *serverConnAuth
+	peek(store *cacheStore, index int) *serverConnAuth
 }
 
 // entryOpFIFO is the first-in-first-out operator of the connection entry.
@@ -90,11 +90,11 @@ func (o *entryOpFIFO) pop(store *cacheStore, postPop func()) *serverConnAuth {
 }
 
 // peek implements the EntryOperation interface.
-func (o *entryOpFIFO) peek(store *cacheStore) *serverConnAuth {
-	if store == nil || len(store.connections) == 0 {
+func (o *entryOpFIFO) peek(store *cacheStore, index int) *serverConnAuth {
+	if store == nil || index >= len(store.connections) {
 		return nil
 	}
-	return store.connections[0]
+	return store.connections[index]
 }
 
 // ConnOperator is the type of connection operator. It is a map
@@ -173,7 +173,7 @@ type ConnCache interface {
 	// Returns if the connection is pushed into the cache.
 	Push(cacheKey, ServerConn) bool
 	// Pop pops a server connection from the cache.
-	Pop(cacheKey, uint32, []byte, []byte) ServerConn
+	Pop(cacheKey, uint32, []byte, []byte, func(string) bool) ServerConn
 	// Count returns the total number of cached connections. It is
 	// mainly for testing.
 	Count() int
@@ -362,7 +362,13 @@ func (c *connCache) Push(key cacheKey, sc ServerConn) bool {
 }
 
 // Pop implements the ConnCache interface.
-func (c *connCache) Pop(key cacheKey, connID uint32, salt []byte, authResp []byte) ServerConn {
+func (c *connCache) Pop(
+	key cacheKey,
+	connID uint32,
+	salt []byte,
+	authResp []byte,
+	filter func(string) bool,
+) ServerConn {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	store, ok := c.mu.cache[key]
@@ -373,8 +379,20 @@ func (c *connCache) Pop(key cacheKey, connID uint32, salt []byte, authResp []byt
 		return nil
 	}
 	// If it has expired, trash it and pop the second one.
+	var index int
 	for len(store.connections) != 0 {
-		sc := connOperator[c.opStrategy].peek(c.mu.cache[key])
+		sc := connOperator[c.opStrategy].peek(c.mu.cache[key], index)
+		if sc == nil {
+			return nil
+		}
+
+		// filter function is used to filter out the bad connections,
+		// such as the connections failed to connected to, or the self
+		// connection when transfer session.
+		if filter != nil && filter(sc.RawConn().RemoteAddr().String()) {
+			index++
+			continue
+		}
 
 		postPop := func() {
 			delete(c.mu.allConns, sc.ServerConn)

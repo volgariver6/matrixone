@@ -26,12 +26,13 @@ import (
 	"github.com/fagongzi/goetty/v2"
 	"github.com/fagongzi/goetty/v2/buf"
 	"github.com/lni/goutils/leaktest"
-	"github.com/stretchr/testify/require"
-
+	"github.com/matrixorigin/matrixone/pkg/clusterservice"
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/runtime"
+	"github.com/matrixorigin/matrixone/pkg/common/stopper"
 	"github.com/matrixorigin/matrixone/pkg/config"
 	"github.com/matrixorigin/matrixone/pkg/frontend"
+	"github.com/stretchr/testify/require"
 )
 
 type mockNetConn struct {
@@ -296,16 +297,39 @@ func createNewClientConn(t *testing.T) (ClientConn, func()) {
 	frontend.SetSessionAlloc("", frontend.NewSessionAllocator(newTestPu()))
 	clientBaseConnID = 90
 	rt := runtime.DefaultRuntime()
+	runtime.SetupServiceBasedRuntime("", rt)
 	logger := rt.Logger()
 	cs := newCounterSet()
+	st := stopper.NewStopper("")
+	mc := clusterservice.NewMOCluster("", &mockHAKeeperClient{}, time.Hour)
+	rt.SetGlobalVariables(runtime.ClusterService, mc)
+
+	var opts []rebalancerOption
+	opts = append(opts, withRebalancerInterval(time.Hour))
+	rb, err := newRebalancer("", st, logger, mc, opts...)
+	require.NoError(t, err)
+	require.NotNil(t, rb)
 	cc, err := newClientConn(
-		ctx, &Config{}, logger, cs, s,
-		nil, nil, nil, nil, nil, nil, nil)
+		ctx,
+		&Config{},
+		logger,
+		cs,
+		s,
+		nil,
+		nil,
+		newRouter(mc, rb, nil, false),
+		nil,
+		nil,
+		nil,
+		nil,
+	)
 	require.NoError(t, err)
 	require.NotNil(t, cc)
 	return cc, func() {
 		cancel()
 		_ = cc.Close()
+		st.Stop()
+		mc.Close()
 	}
 }
 
@@ -549,4 +573,32 @@ func TestClientConn_SendErrToClient(t *testing.T) {
 	require.NotNil(t, cc.GetHandshakePack())
 	cc.SendErrToClient(moerr.NewInternalErrorNoCtx("msg1"))
 	wg.Wait()
+}
+
+func TestConnectToBackend_ConnCache(t *testing.T) {
+	cc, cleanup := createNewClientConn(t)
+	defer cleanup()
+	c, ok := cc.(*clientConn)
+	require.True(t, ok)
+	require.NotNil(t, c)
+	c.clientInfo.hash = "k100"
+	c.sendPacketToClientFn = func(r []byte, sc ServerConn) error {
+		return nil
+	}
+
+	ctx := context.Background()
+	c.connCache = newConnCache(ctx, "", c.log,
+		withResetSessionFunc(func(conn ServerConn) ([]byte, error) {
+			return nil, nil
+		}),
+		withAuthConstructor(nil),
+	)
+	c1, _ := net.Pipe()
+	mockConn1 := newMockServerConn(c1)
+	mockConn1.SetConnResponse([]byte{1, 2, 3, 4, 5, 6})
+	require.True(t, c.connCache.Push("k100", mockConn1))
+
+	sc, err := c.connectToBackend("")
+	require.NoError(t, err)
+	require.NotNil(t, sc)
 }

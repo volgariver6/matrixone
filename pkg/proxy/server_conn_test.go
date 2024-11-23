@@ -64,6 +64,7 @@ func testMakeCNServer(
 type mockServerConn struct {
 	conn       net.Conn
 	createTime time.Time
+	connResp   []byte
 	returnErr  error
 }
 
@@ -96,8 +97,8 @@ func (s *mockServerConn) ExecStmt(stmt internalStmt, resp chan<- []byte) (bool, 
 	return true, nil
 }
 func (s *mockServerConn) GetCNServer() *CNServer   { return nil }
-func (s *mockServerConn) SetConnResponse(_ []byte) {}
-func (s *mockServerConn) GetConnResponse() []byte  { return nil }
+func (s *mockServerConn) SetConnResponse(b []byte) { s.connResp = b }
+func (s *mockServerConn) GetConnResponse() []byte  { return s.connResp }
 func (s *mockServerConn) CreateTime() time.Time    { return s.createTime }
 func (s *mockServerConn) Quit() error {
 	if s.returnErr != nil {

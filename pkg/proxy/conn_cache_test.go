@@ -51,10 +51,10 @@ func TestEntryOperation(t *testing.T) {
 	for _, co := range connOperator {
 		sc1 := newMockServerConn(nil)
 		co.push(nilStore, newServerConnAuth(sc1, newMockGoodAuthenticator()), func() {})
-		assert.Nil(t, co.peek(nilStore))
+		assert.Nil(t, co.peek(nilStore, 0))
 		assert.Nil(t, co.pop(nilStore, func() {}))
 
-		assert.Nil(t, co.peek(store))
+		assert.Nil(t, co.peek(store, 0))
 		assert.Nil(t, co.pop(store, func() {}))
 
 		total := 10
@@ -65,7 +65,7 @@ func TestEntryOperation(t *testing.T) {
 		assert.Equal(t, 10, store.count())
 
 		for i := 0; i < total; i++ {
-			assert.NotNil(t, co.peek(store))
+			assert.NotNil(t, co.peek(store, 0))
 			assert.Equal(t, total, store.count())
 		}
 
@@ -213,9 +213,39 @@ func TestConnCache(t *testing.T) {
 			assert.True(t, cc.Push("k100", mockConn1))
 			assert.Equal(t, 1, cc.Count())
 
-			sc := cc.Pop("k100", 1, nil, nil)
+			sc := cc.Pop("k100", 1, nil, nil, nil)
 			assert.NotNil(t, sc)
 			assert.Equal(t, 0, cc.Count())
+		})
+	})
+
+	t.Run("pop - nil auth, filter", func(t *testing.T) {
+		runTestWithNewConnCacheWithAuthConstructor(t, nil, func(cc ConnCache) {
+			c1, _ := net.Pipe()
+			mockConn1 := newMockServerConn(c1)
+			assert.True(t, cc.Push("k100", mockConn1))
+			assert.Equal(t, 1, cc.Count())
+
+			c2, _ := net.Pipe()
+			mockConn2 := newMockServerConn(c2)
+			assert.True(t, cc.Push("k100", mockConn2))
+			assert.Equal(t, 2, cc.Count())
+
+			var i int
+			sc := cc.Pop("k100",
+				1,
+				nil,
+				nil,
+				func(s string) bool {
+					if i == 0 {
+						i++
+						return true
+					}
+					return false
+				},
+			)
+			assert.NotNil(t, sc)
+			assert.Equal(t, 1, cc.Count())
 		})
 	})
 
@@ -228,7 +258,7 @@ func TestConnCache(t *testing.T) {
 			assert.True(t, cc.Push("k100", mockConn1))
 			assert.Equal(t, 1, cc.Count())
 
-			sc := cc.Pop("k100", 1, nil, nil)
+			sc := cc.Pop("k100", 1, nil, nil, nil)
 			assert.Nil(t, sc)
 			assert.Equal(t, 0, cc.Count())
 		})
@@ -241,7 +271,7 @@ func TestConnCache(t *testing.T) {
 			assert.True(t, cc.Push("k100", mockConn1))
 			assert.Equal(t, 1, cc.Count())
 
-			sc := cc.Pop("k100", 1, nil, nil)
+			sc := cc.Pop("k100", 1, nil, nil, nil)
 			assert.Nil(t, sc)
 			assert.Equal(t, 1, cc.Count())
 		})
@@ -254,7 +284,7 @@ func TestConnCache(t *testing.T) {
 			assert.True(t, cc.Push("k100", mockConn1))
 			assert.Equal(t, 1, cc.Count())
 
-			sc := cc.Pop("k100", 1, nil, nil)
+			sc := cc.Pop("k100", 1, nil, nil, nil)
 			// cannot get conn as timeout.
 			assert.Nil(t, sc)
 			// count is 0 because the connection has been removed.

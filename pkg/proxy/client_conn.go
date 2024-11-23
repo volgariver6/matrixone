@@ -154,6 +154,9 @@ type clientConn struct {
 	sc ServerConn
 	// connCache is the cache of the connections.
 	connCache ConnCache
+	// the function is used to send packet to client by the connection
+	// popped from the conn cache.
+	sendPacketToClientFn func(r []byte, sc ServerConn) error
 }
 
 // internalStmt is used internally in proxy, which indicates the stmt
@@ -206,6 +209,7 @@ func newClientConn(
 		queryClient:       qc,
 		connCache:         connCache,
 	}
+	c.sendPacketToClientFn = c.sendPacketToClient
 	c.connID, err = c.genConnID()
 	if err != nil {
 		return nil, err
@@ -501,21 +505,6 @@ func (c *clientConn) connectToBackend(prevAdd string) (ServerConn, error) {
 		return nil, moerr.NewInternalErrorNoCtx("no router available")
 	}
 
-	var sc ServerConn
-	// If connCache is enabled, try to get connection from the cache.
-	if c.connCache != nil {
-		sc = c.connCache.Pop(c.clientInfo.hash, c.connID, c.mysqlProto.GetSalt(), c.mysqlProto.GetAuthResponse())
-		if sc != nil {
-			// get the response from the cn server.
-			re := sc.GetConnResponse()
-			if err := c.sendPacketToClient(re, sc); err != nil {
-				return nil, err
-			}
-			v2.ProxyConnectSuccessCounter.Inc()
-			return sc, nil
-		}
-	}
-
 	badCNServers := make(map[string]struct{})
 	if prevAdd != "" {
 		badCNServers[prevAdd] = struct{}{}
@@ -525,6 +514,40 @@ func (c *clientConn) connectToBackend(prevAdd string) (ServerConn, error) {
 			return true
 		}
 		return false
+	}
+
+	var sc ServerConn
+	// If connCache is enabled, try to get connection from the cache.
+	if c.connCache != nil {
+		sc = c.connCache.Pop(
+			c.clientInfo.hash,
+			c.connID,
+			c.mysqlProto.GetSalt(),
+			c.mysqlProto.GetAuthResponse(),
+			filterFn,
+		)
+		if sc != nil {
+			// get the response from the cn server.
+			re := sc.GetConnResponse()
+			if len(re) > 0 {
+				if err := c.sendPacketToClientFn(re, sc); err != nil {
+					c.log.Error("failed to send packt to client", zap.Error(err))
+					closeErr := sc.Close()
+					if closeErr != nil {
+						c.log.Error("failed to close server connection", zap.Error(closeErr))
+					}
+				} else {
+					v2.ProxyConnectSuccessCounter.Inc()
+					return sc, nil
+				}
+			} else {
+				c.log.Error("resp is empty, close the ServerConn")
+				closeErr := sc.Close()
+				if closeErr != nil {
+					c.log.Error("failed to close server connection", zap.Error(closeErr))
+				}
+			}
+		}
 	}
 
 	var err error
