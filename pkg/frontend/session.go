@@ -1081,6 +1081,7 @@ func (ses *Session) SetConnectionID(v uint32) {
 	if protocol != nil {
 		protocol.SetU32(CONNID, v)
 	}
+	ses.getRoutineManager().sessionManager.AddSession(ses)
 }
 
 func (ses *Session) skipAuthForSpecialUser() bool {
