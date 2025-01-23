@@ -27,6 +27,7 @@ import (
 	"github.com/matrixorigin/matrixone/pkg/common/moerr"
 	"github.com/matrixorigin/matrixone/pkg/common/morpc"
 	moruntime "github.com/matrixorigin/matrixone/pkg/common/runtime"
+	"github.com/matrixorigin/matrixone/pkg/logutil"
 	"github.com/matrixorigin/matrixone/pkg/pb/metadata"
 	"github.com/matrixorigin/matrixone/pkg/pb/txn"
 	v2 "github.com/matrixorigin/matrixone/pkg/util/metric/v2"
@@ -193,7 +194,12 @@ func (s *sender) doSend(ctx context.Context, request txn.TxnRequest) (txn.TxnRes
 			// These errors are retriable error. Retry to send request to TN.
 			if moerr.IsMoErrCode(err, moerr.ErrNoAvailableBackend) ||
 				moerr.IsMoErrCode(err, moerr.ErrBackendCannotConnect) {
-				time.Sleep(time.Millisecond * 300)
+				time.Sleep(time.Second)
+				logutil.Errorf("send txn request failed, txn: %s, tn address: %s, error: %v",
+					hex.EncodeToString(request.Txn.ID),
+					tn.Address,
+					err,
+				)
 				continue
 			}
 			return txn.TxnResponse{}, err
