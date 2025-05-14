@@ -1,0 +1,38 @@
+service-type = "TN"
+data-dir = "./mo-data"
+
+[log]
+level = "info"
+
+[tn]
+uuid = "dd4dccb4-4d3c-41f8-b482-5251dc7a41bf"
+port-base = 19000
+
+[[fileservice]]
+name = "LOCAL"
+backend = "DISK"
+
+[[fileservice]]
+name = "SHARED"
+backend = "DISK"
+data-dir = "mo-data/s3"
+
+[fileservice.cache]
+memory-capacity = "8GB"
+disk-capacity = "10GB"
+disk-path = "mo-data/file-service-cache"
+disk-min-evict-interval = "7m"
+disk-evict-target = 0.8
+
+[[fileservice]]
+name = "ETL"
+backend = "DISK-ETL"
+
+[observability]
+metricUpdateStorageUsageInterval = "15m"
+enableStmtMerge = true
+enableMetricToProm = true
+
+[malloc]
+check-fraction = 65536
+enable-metrics = true
